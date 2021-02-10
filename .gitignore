@@ -1,0 +1,7 @@
+build/*
+a.out
+
+.project
+.cproject
+.settings/*
+
