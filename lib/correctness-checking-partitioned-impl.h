@@ -1,6 +1,10 @@
 #ifndef CORRECTNESS_CHECKING_PARTITIONED_IMPL
 #define CORRECTNESS_CHECKING_PARTITIONED_IMPL
 
+// Includes the implementations in header, so that it may be included in
+// user-code without any need for extra linking
+#define INCLUDE_DEFINITION_IN_HEADER
+
 #include "mpi.h"
 
 typedef struct {
@@ -28,5 +32,13 @@ int MPIX_Start(MPIX_Request *request);
 int MPIX_Wait(MPIX_Request *request, MPI_Status *status);
 
 int MPIX_Request_free(MPIX_Request *request);
+
+// definition of valgrind block names
+#define SEND_BLOCK_STRING "SEND OPERATION: READING IS ALLOWED!"
+#define RECV_BLOCK_STRING "RECEIVE OPERATION: READING IS FORBIDDEN"
+
+#ifdef INCLUDE_DEFINITION_IN_HEADER
+#include "correctness-checking-partitioned-impl.c"
+#endif
 
 #endif

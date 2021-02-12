@@ -17,7 +17,7 @@ int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
   request->is_active = 0;
   request->valgrind_block_handle = VALGRIND_CREATE_BLOCK(
       buf, request->partition_length * request->partition_count,
-      "SEND OPERATION: READING IS ALLOWED!");
+      SEND_BLOCK_STRING);
 
   // init MPI
   return MPI_Send_init(buf, count * partitions, datatype, dest, tag, comm,
@@ -37,7 +37,7 @@ int MPIX_Precv_init(void *buf, int partitions, MPI_Count count,
   request->is_active = 0;
   request->valgrind_block_handle = VALGRIND_CREATE_BLOCK(
       buf, request->partition_length * request->partition_count,
-      "RECEIVE OPERATION: READING IS FORBIDDEN");
+      RECV_BLOCK_STRING);
 
   // init MPI
   return MPI_Recv_init(buf, count * partitions, datatype, dest, tag, comm,
