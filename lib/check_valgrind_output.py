@@ -7,6 +7,7 @@ import argparse
 SEND_BLOCK_STRING = "SEND OPERATION: READING IS ALLOWED!"
 RECV_BLOCK_STRING = "RECEIVE OPERATION: READING IS FORBIDDEN"
 
+#TODO Parsing might break if stacktrace has only length 1 ??
 
 def print_pretty_stackframe(f, use_at=False):
     if use_at:
@@ -59,7 +60,13 @@ def print_valgrind_like_report(error_case, counts):
 def parse_error_counts(raw_input_dict):
     result = {}
     # pairs of count,unique
-    for c in raw_input_dict["errorcounts"]['pair']:
+    print(raw_input_dict["errorcounts"]['pair'])
+    if isinstance(raw_input_dict["errorcounts"]['pair'], list):
+        for c in raw_input_dict["errorcounts"]['pair']:
+            result[c['unique']] = int(c['count'])
+    else:
+        # no list just one entry
+        c = raw_input_dict["errorcounts"]['pair']
         result[c['unique']] = int(c['count'])
 
     return result
@@ -82,7 +89,14 @@ def main():
     errorcounts = parse_error_counts(data)
 
     errors_introduced = 0
-    for case in data["error"]:
+
+    if isinstance(data["error"], list):
+        case_list = data["error"]
+    else:
+        # pack it int list
+        case_list = [data["error"]]
+
+    for case in case_list:
         error_originates_from_communication_partition, hide_error = check_if_error_originates_from_communication_partition(
             case)
         if error_originates_from_communication_partition:
@@ -98,7 +112,9 @@ def main():
                     print("NOT introduced by communication partitioning:")
                     print_valgrind_like_report(case, errorcounts)
 
-    print("\n Introduced %i errors due to Communication partitioning" % errors_introduced)
+    print("\nIntroduced %i errors due to Communication partitioning" % errors_introduced)
+    if (errors_introduced != 0):
+        exit(-1)
 
 
 if __name__ == "__main__":
