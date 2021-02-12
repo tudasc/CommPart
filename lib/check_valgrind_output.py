@@ -60,7 +60,6 @@ def print_valgrind_like_report(error_case, counts):
 def parse_error_counts(raw_input_dict):
     result = {}
     # pairs of count,unique
-    print(raw_input_dict["errorcounts"]['pair'])
     if isinstance(raw_input_dict["errorcounts"]['pair'], list):
         for c in raw_input_dict["errorcounts"]['pair']:
             result[c['unique']] = int(c['count'])
