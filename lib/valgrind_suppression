@@ -1,0 +1,7 @@
+{
+   <ucp_worker_in_mpi_lib>
+   Memcheck:Cond
+   ...
+   fun:ucp_worker_iface_open
+}
+
