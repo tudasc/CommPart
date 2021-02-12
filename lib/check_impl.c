@@ -56,7 +56,7 @@ void correct_usage_with_false_positives() {
     }
   }
 
-  printf("%d", sum);
+  printf("%d\n", sum);
 
   MPIX_Wait(&r, MPI_STATUS_IGNORE);
 
