@@ -25,3 +25,6 @@ export MPICXX=$(which mpicxx)
 
 export CPATH=$CPATH:/usr/include/valgrind
 
+# the implementation header
+export CPATH=$CPATH:/home/tim/mpi-partitioned-communication/lib
+
