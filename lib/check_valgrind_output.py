@@ -59,14 +59,18 @@ def print_valgrind_like_report(error_case, counts):
 
 def parse_error_counts(raw_input_dict):
     result = {}
-    # pairs of count,unique
-    if isinstance(raw_input_dict["errorcounts"]['pair'], list):
-        for c in raw_input_dict["errorcounts"]['pair']:
+    try:
+        # pairs of count,unique
+        if isinstance(raw_input_dict["errorcounts"]['pair'], list):
+            for c in raw_input_dict["errorcounts"]['pair']:
+                result[c['unique']] = int(c['count'])
+        else:
+            # no list just one entry
+            c = raw_input_dict["errorcounts"]['pair']
             result[c['unique']] = int(c['count'])
-    else:
-        # no list just one entry
-        c = raw_input_dict["errorcounts"]['pair']
-        result[c['unique']] = int(c['count'])
+    except TypeError:
+        # e.g. No errorcounts present (meaning no erors present)
+        return {}
 
     return result
 
@@ -89,31 +93,34 @@ def main():
 
     errors_introduced = 0
 
-    if isinstance(data["error"], list):
-        case_list = data["error"]
-    else:
-        # pack it int list
-        case_list = [data["error"]]
-
-    for case in case_list:
-        error_originates_from_communication_partition, hide_error = check_if_error_originates_from_communication_partition(
-            case)
-        if error_originates_from_communication_partition:
-            print("ERROR INTRODUCED BY COMMUNICATION PARTITIONING!:")
-            print_valgrind_like_report(case, errorcounts)
-            errors_introduced = errors_introduced + get_error_count(case, errorcounts)
+    if "error" in data:
+        if isinstance(data["error"], list):
+            case_list = data["error"]
         else:
-            if not hide_error:  # due to it being a false positive
-                if case['kind'] != 'InvalidRead' and case['kind'] != 'InvalidWrite':
-                    print("%i errors of kind %s that can not be introduced by Communication Partition" % (
-                        get_error_count(case, errorcounts), case['kind']))
-                else:
-                    print("NOT introduced by communication partitioning:")
-                    print_valgrind_like_report(case, errorcounts)
+            # pack it int list
+            case_list = [data["error"]]
 
-    print("\nIntroduced %i errors due to Communication partitioning" % errors_introduced)
-    if (errors_introduced != 0):
-        exit(-1)
+        for case in case_list:
+            error_originates_from_communication_partition, hide_error = check_if_error_originates_from_communication_partition(
+                case)
+            if error_originates_from_communication_partition:
+                print("ERROR INTRODUCED BY COMMUNICATION PARTITIONING!:")
+                print_valgrind_like_report(case, errorcounts)
+                errors_introduced = errors_introduced + get_error_count(case, errorcounts)
+            else:
+                if not hide_error:  # due to it being a false positive
+                    if case['kind'] != 'InvalidRead' and case['kind'] != 'InvalidWrite':
+                        print("%i errors of kind %s that can not be introduced by Communication Partition" % (
+                            get_error_count(case, errorcounts), case['kind']))
+                    else:
+                        print("NOT introduced by communication partitioning:")
+                        print_valgrind_like_report(case, errorcounts)
+
+        print("\nIntroduced %i errors due to Communication partitioning" % errors_introduced)
+        if (errors_introduced != 0):
+            exit(-1)
+    else:
+        print("No Errors reported by valgrind")
 
 
 if __name__ == "__main__":
