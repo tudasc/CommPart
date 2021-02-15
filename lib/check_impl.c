@@ -11,7 +11,7 @@
 void correct_usage() {
   MPIX_Request r;
 
-  int *buffer = malloc(sizeof(int) * PARTITIONS * SIZE);
+  int *buffer = (int*) malloc(sizeof(int) * PARTITIONS * SIZE);
 
   MPIX_Psend_init(buffer, PARTITIONS, SIZE, MPI_INT, 1, TAG, MPI_COMM_WORLD,
                   MPI_INFO_NULL, &r);
@@ -35,7 +35,7 @@ void correct_usage() {
 void correct_usage_with_false_positives() {
   MPIX_Request r;
 
-  int *buffer = malloc(sizeof(int) * PARTITIONS * SIZE);
+  int *buffer = (int*) malloc(sizeof(int) * PARTITIONS * SIZE);
   int sum = 0;
 
   MPIX_Psend_init(buffer, PARTITIONS, SIZE, MPI_INT, 1, TAG, MPI_COMM_WORLD,
@@ -66,7 +66,7 @@ void correct_usage_with_false_positives() {
 void error_usage() {
   MPIX_Request r;
 
-  int *buffer = malloc(sizeof(int) * PARTITIONS * SIZE);
+  int *buffer = (int*) malloc(sizeof(int) * PARTITIONS * SIZE);
 
   MPIX_Psend_init(buffer, PARTITIONS, SIZE, MPI_INT, 1, TAG, MPI_COMM_WORLD,
                   MPI_INFO_NULL, &r);
@@ -109,7 +109,7 @@ int main(int argc, char **argv) {
     error_usage();
   } else if (rank == 1) {
     MPIX_Request r;
-    int *buffer = malloc(sizeof(int) * PARTITIONS * SIZE);
+    int *buffer = (int*) malloc(sizeof(int) * PARTITIONS * SIZE);
 
     MPIX_Precv_init(buffer, 1, (PARTITIONS * SIZE), MPI_INT, 0, TAG,
                     MPI_COMM_WORLD, MPI_INFO_NULL, &r);

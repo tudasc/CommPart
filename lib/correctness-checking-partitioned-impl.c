@@ -49,7 +49,7 @@ int MPIX_Pready(int partition, MPIX_Request *request) {
   assert(request->is_active == 1);
 
   // taint partition as modification is forbidden
-  VALGRIND_MAKE_MEM_NOACCESS(request->buf_start +
+  VALGRIND_MAKE_MEM_NOACCESS(((char*)request->buf_start) +
                                  request->partition_length * partition,
                              request->partition_length);
   // for a send operation reading is actually legal!!
