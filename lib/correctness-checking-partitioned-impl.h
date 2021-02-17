@@ -15,6 +15,9 @@ typedef struct {
   int partitions_ready;
   int is_active;
   int valgrind_block_handle;
+  // to be used when there is a local overlap
+  int* local_overlap;
+  int* local_overlap_count;
 } MPIX_Request;
 
 int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
