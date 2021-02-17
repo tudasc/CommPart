@@ -4,6 +4,8 @@
 #include "mpi.h"
 #include <stdlib.h>
 #include <limits.h>
+#include <stdio.h>
+#include <string.h>
 
 int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
 		MPI_Datatype datatype, int dest, int tag, MPI_Comm comm, MPI_Info info,
@@ -245,7 +247,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		 }
 		 */
 
-		printf("Partitioned send operations into %ld Partitions\n", partitions);
+		printf("Partitioned send operations into %d Partitions\n", partitions);
 		MPIX_Psend_init(buf, partitions, valid_partition_size_datamembers,
 				datatype, dest, tag, comm,
 				MPI_INFO_NULL, request);
@@ -355,15 +357,15 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 			// lowest
 			if (curr_chunk_add_begin < curr_chunk_add_end
 					&& curr_chunk_add_begin < curr_P) {
-				printf("0x%.8X: %s", chunk_adress_begin[current_chunk_begin],
+				printf("0x%.8lX: %s", chunk_adress_begin[current_chunk_begin],
 						msg_chunks_begin[current_chunk_begin]);
 				current_chunk_begin++;
 			} else if (curr_chunk_add_end < curr_P) {
-				printf("0x%.8X: %s", chunk_adress_end[current_chunk_end],
+				printf("0x%.8lX: %s", chunk_adress_end[current_chunk_end],
 						msg_chunks_end[current_chunk_end]);
 				current_chunk_end++;
 			} else {
-				printf("0x%.8X: %s", partition_adress[current_partition],
+				printf("0x%.8lX: %s", partition_adress[current_partition],
 						msg_partitions[current_partition]);
 				current_partition++;
 			}
