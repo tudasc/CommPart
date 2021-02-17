@@ -37,6 +37,9 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
+#include "llvm/IR/InstIterator.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+
 #include <assert.h>
 //#include <mpi.h>
 #include <cstring>
@@ -63,77 +66,212 @@ ImplementationSpecifics *mpi_implementation_specifics;
 FunctionMetadata *function_metadata;
 
 namespace {
-struct MSGOrderRelaxCheckerPass : public ModulePass {
-  static char ID;
+struct MSGOrderRelaxCheckerPass: public ModulePass {
+	static char ID;
 
-  MSGOrderRelaxCheckerPass() : ModulePass(ID) {}
+	MSGOrderRelaxCheckerPass() :
+			ModulePass(ID) {
+	}
 
-  // register that we require this analysis
+	// register that we require this analysis
 
-  void getAnalysisUsage(AnalysisUsage &AU) const {
-    AU.addRequired<TargetLibraryInfoWrapperPass>();
-    AU.addRequiredTransitive<AAResultsWrapperPass>();
-    AU.addRequired<LoopInfoWrapperPass>();
-    AU.addRequired<ScalarEvolutionWrapperPass>();
-  }
-  /*
-   void getAnalysisUsage(AnalysisUsage &AU) const {
-   AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
-   AU.addRequiredTransitive<AAResultsWrapperPass>();
-   AU.addRequiredTransitive<LoopInfoWrapperPass>();
-   AU.addRequiredTransitive<ScalarEvolutionWrapperPass>();
-   }
-   */
+	void getAnalysisUsage(AnalysisUsage &AU) const {
+		AU.addRequired<TargetLibraryInfoWrapperPass>();
+		AU.addRequiredTransitive<AAResultsWrapperPass>();
+		AU.addRequired<LoopInfoWrapperPass>();
+		AU.addRequired<ScalarEvolutionWrapperPass>();
+	}
+	/*
+	 void getAnalysisUsage(AnalysisUsage &AU) const {
+	 AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
+	 AU.addRequiredTransitive<AAResultsWrapperPass>();
+	 AU.addRequiredTransitive<LoopInfoWrapperPass>();
+	 AU.addRequiredTransitive<ScalarEvolutionWrapperPass>();
+	 }
+	 */
 
-  StringRef getPassName() const { return "MPI Communication Partition"; }
+	StringRef getPassName() const {
+		return "MPI Communication Partition";
+	}
 
-  // Pass starts here
-  virtual bool runOnModule(Module &M) {
+	//TODO is there a better option to do it, it seems that this only reverse engenieer the analysis donb by llvm
+	// calculates the start value and inserts the calculation into the program
+	Value* get_scev_value(const SCEV *scev, Instruction *insert_before) {
 
-    //Debug(M.dump(););
+		scev->print(errs());
+		errs() << "\n";
 
-    mpi_func = get_used_mpi_functions(M);
-    if (!is_mpi_used(mpi_func)) {
-      // nothing to do for non mpi applications
-      delete mpi_func;
-      return false;
-    }
+		if (auto *c = dyn_cast<SCEVUnknown>(scev)) {
+			c->getValue()->print(errs());
+			errs() << "\n";
+			return c->getValue();
+		}
+		if (auto *c = dyn_cast<SCEVConstant>(scev)) {
+			c->getValue()->print(errs());
+			errs() << "\n";
+			return c->getValue();
+		}
 
-    analysis_results = new RequiredAnalysisResults(this);
+		if (auto *c = dyn_cast<SCEVCastExpr>(scev)) {
+			IRBuilder<> builder(insert_before);
+			errs() << " cast expr\n";
+			auto *operand = c->getOperand();
 
-    //function_metadata = new FunctionMetadata(analysis_results->getTLI(), M);
+			if (isa<SCEVSignExtendExpr>(c)) {
+				return builder.CreateSExt(
+						get_scev_value(operand, insert_before), c->getType());
+			}
+			if (isa<SCEVTruncateExpr>(c)) {
+				return builder.CreateTrunc(
+						get_scev_value(operand, insert_before), c->getType());
+			}
+			if (isa<SCEVZeroExtendExpr>(c)) {
+				return builder.CreateZExt(
+						get_scev_value(operand, insert_before), c->getType());
+			}
+		}
+		if (auto *c = dyn_cast<SCEVCommutativeExpr>(scev)) {
+			IRBuilder<> builder(insert_before);
+			errs() << " commutative expr\n";
+			if (isa<SCEVAddExpr>(c)) {
+				errs() << " add expr\n";
 
-    mpi_implementation_specifics = new ImplementationSpecifics(M);
+				assert(c->getNumOperands() == 2);
 
-    errs() << "Successfully executed the pass\n\n";
-    delete mpi_func;
-    delete mpi_implementation_specifics;
-    delete analysis_results;
+				auto *result = builder.CreateAdd(
+						get_scev_value(c->getOperand(0), insert_before),
+						get_scev_value(c->getOperand(1), insert_before), "",
+						c->hasNoUnsignedWrap(), c->hasNoSignedWrap());
 
-    //delete function_metadata;
+				result->print(errs());
+				errs() << "\n";
+				return result;
+			}
+			if (isa<SCEVMulExpr>(c)) {
+				errs() << "mul expr\n";
+				assert(c->getNumOperands() == 2);
+				return builder.CreateMul(
+						get_scev_value(c->getOperand(0), insert_before),
+						get_scev_value(c->getOperand(1), insert_before), "",
+						c->hasNoUnsignedWrap(), c->hasNoSignedWrap());
+			}
+		}
+		if (isa<SCEVMinMaxExpr>(scev)) {
+			errs() << " This kind of expression is not supported yet\n";
+			assert(false);
+		}
 
-    return false;
-  }
-}; // class MSGOrderRelaxCheckerPass
-} // namespace
+		if (auto *c = dyn_cast<SCEVAddRecExpr>(scev)) {
+			errs()
+					<< " ERROR CALCULATING STARTPOINT: encountered another inductive expression -- this is not supported yet\n";
+			assert(false);
+		}
+
+		errs() << " ERROR CALCULATING STARTPOINT\n";
+		assert(false);
+
+		return nullptr;
+	}
+	// Pass starts here
+	virtual bool runOnModule(Module &M) {
+
+		//Debug(M.dump(););
+
+		//M.print(errs(), nullptr);
+
+		mpi_func = get_used_mpi_functions(M);
+		if (!is_mpi_used(mpi_func)) {
+			// nothing to do for non mpi applications
+			delete mpi_func;
+			return false;
+		}
+
+		analysis_results = new RequiredAnalysisResults(this);
+
+		//function_metadata = new FunctionMetadata(analysis_results->getTLI(), M);
+
+		mpi_implementation_specifics = new ImplementationSpecifics(M);
+
+		// debugging
+
+		Function *F = M.getFunction(".omp_outlined.");
+
+		Function *dbg_func = M.getFunction("debug_function");
+
+		LoopInfo *linfo = analysis_results->getLoopInfo(F);
+		ScalarEvolution *se = analysis_results->getSE(F);
+
+		for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
+
+			if (auto *gep = dyn_cast<GetElementPtrInst>(&*I)) {
+
+				Loop *loop = linfo->getLoopFor(gep->getParent());
+
+				errs() << "\n";
+				errs() << "\n";
+				gep->print(errs(), nullptr);
+				errs() << "\n";
+				auto *sc = se->getSCEV(gep);
+				sc->print(errs());
+				errs() << "\n";
+
+				errs() << "Loop Computable? "
+						<< (se->hasComputableLoopEvolution(sc, loop)) << "\n";
+
+				if (auto *scn = dyn_cast<SCEVAddRecExpr>(sc)) {
+					errs() << "Linear? " << scn->isAffine() << "\n";
+
+					scn->getStart()->print(errs());
+					errs() << "\n";
+
+					scn->getStepRecurrence(*se)->print(errs());
+					errs() << "\n";
+
+					//A
+					auto step = get_scev_value(scn->getStepRecurrence(*se), gep);
+					// x is iteration count
+					//B
+					auto start = get_scev_value(scn->getStart(), gep);
+
+
+				}
+
+
+			}
+
+			//errs() << "\n";
+
+		}
+
+		errs() << "Successfully executed the pass\n\n";
+		delete mpi_func;
+		delete mpi_implementation_specifics;
+		delete analysis_results;
+
+		//delete function_metadata;
+
+		return false;
+	}
+}
+;
+// class MSGOrderRelaxCheckerPass
+}// namespace
 
 char MSGOrderRelaxCheckerPass::ID = 42;
 
 // Automatically enable the pass.
 // http://adriansampson.net/blog/clangpass.html
-static void registerExperimentPass(const PassManagerBuilder &,
-                                   legacy::PassManagerBase &PM) {
-  PM.add(new MSGOrderRelaxCheckerPass());
+static void registerExperimentPass(const PassManagerBuilder&,
+		legacy::PassManagerBase &PM) {
+	PM.add(new MSGOrderRelaxCheckerPass());
 }
 
 // static RegisterStandardPasses
 //    RegisterMyPass(PassManagerBuilder::EP_ModuleOptimizerEarly,
 //                   registerExperimentPass);
 
-static RegisterStandardPasses
-    RegisterMyPass(PassManagerBuilder::EP_OptimizerLast,
-                   registerExperimentPass);
+static RegisterStandardPasses RegisterMyPass(
+		PassManagerBuilder::EP_OptimizerLast, registerExperimentPass);
 
-static RegisterStandardPasses
-    RegisterMyPass0(PassManagerBuilder::EP_EnabledOnOptLevel0,
-                    registerExperimentPass);
+static RegisterStandardPasses RegisterMyPass0(
+		PassManagerBuilder::EP_EnabledOnOptLevel0, registerExperimentPass);
