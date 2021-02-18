@@ -171,6 +171,80 @@ int signoff_partitions_after_loop_iter(long current_iter, MPIX_Request *request,
 	return 1;
 }
 
+void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
+		long chunk_size, long A_min, long B_min, long A_max, long B_max,
+		MPIX_Request *request) {
+	//DEBUG PRINTING
+	printf("Memory Layout for partitioned Operation:\n");
+	char **msg_partitions = malloc(
+			sizeof(char*) * (request->partition_count + 1));
+	long *partition_adress = malloc(
+			sizeof(long) * (request->partition_count + 1));
+	for (int i = 0; i < request->partition_count; ++i) {
+		partition_adress[i] = (long) request->buf_start
+				+ i * type_extned * request->partition_length;
+		size_t needed_bytes = snprintf(NULL, 0, "Start MSG Part %i\n", i) + 1;
+		msg_partitions[i] = malloc(needed_bytes);
+		sprintf(msg_partitions[i], "Start MSG Part %i\n", i);
+	}
+	partition_adress[request->partition_count] = (long) request->buf_start
+			+ request->partition_count * type_extned
+					* request->partition_length;
+	size_t needed_bytes = snprintf(NULL, 0, "End of Message") + 1;
+	msg_partitions[request->partition_count] = malloc(needed_bytes);
+	sprintf(msg_partitions[request->partition_count], "End of Message");
+	int chunks = (loop_max - loop_min) / chunk_size;
+	char **msg_chunks_begin = malloc(sizeof(char*) * chunks);
+	long *chunk_adress_begin = malloc(sizeof(long) * chunks);
+	char **msg_chunks_end = malloc(sizeof(char*) * chunks);
+	long *chunk_adress_end = malloc(sizeof(long) * chunks);
+	for (int i = 0; i < chunks; ++i) {
+		long min_chunk_iter = loop_min + i * chunk_size;
+		long max_chunk_iter = loop_min + i * (chunk_size + 1);
+		// not outside loop bounds
+		min_chunk_iter = min_chunk_iter < loop_min ? loop_min : min_chunk_iter;
+		max_chunk_iter = max_chunk_iter < loop_max ? loop_max : max_chunk_iter;
+		chunk_adress_begin[i] = A_min * min_chunk_iter + B_min;
+		chunk_adress_end[i] = A_max * max_chunk_iter + B_max;
+		size_t needed_bytes = snprintf(NULL, 0, "Start Loop Chunk %i\n", i) + 1;
+		msg_chunks_begin[i] = malloc(needed_bytes);
+		sprintf(msg_chunks_begin[i], "Start Loop Chunk %i\n", i);
+		needed_bytes = snprintf(NULL, 0, "End Loop Chunk %i\n", i) + 1;
+		msg_chunks_end[i] = malloc(needed_bytes);
+		sprintf(msg_chunks_end[i], "End Loop Chunk %i\n", i);
+	}
+	int current_chunk_begin = 0;
+	int current_chunk_end = 0;
+	int current_partition = 0;
+	while (current_chunk_begin < chunks || current_chunk_end < chunks
+			|| current_partition <= request->partition_count) {
+		long curr_chunk_add_begin =
+				current_chunk_begin < chunks ?
+						chunk_adress_begin[current_chunk_begin] : LONG_MAX;
+		long curr_chunk_add_end =
+				current_chunk_end < chunks ?
+						chunk_adress_end[current_chunk_end] : LONG_MAX;
+		long curr_P =
+				current_partition <= request->partition_count ?
+						partition_adress[current_partition] : LONG_MAX;
+		// lowest
+		if (curr_chunk_add_begin < curr_chunk_add_end
+				&& curr_chunk_add_begin < curr_P) {
+			printf("0x%.8lX: %s", chunk_adress_begin[current_chunk_begin],
+					msg_chunks_begin[current_chunk_begin]);
+			current_chunk_begin++;
+		} else if (curr_chunk_add_end < curr_P) {
+			printf("0x%.8lX: %s", chunk_adress_end[current_chunk_end],
+					msg_chunks_end[current_chunk_end]);
+			current_chunk_end++;
+		} else {
+			printf("0x%.8lX: %s", partition_adress[current_partition],
+					msg_partitions[current_partition]);
+			current_partition++;
+		}
+	}
+}
+
 int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		int dest, int tag, MPI_Comm comm, MPIX_Request *request,
 		// loop info
@@ -284,94 +358,8 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		}
 
 		//DEBUG PRINTING
-		printf("Memory Layout for partitioned Operation:\n");
-
-		char **msg_partitions = malloc(
-				sizeof(char*) * (request->partition_count + 1));
-		long *partition_adress = malloc(
-				sizeof(long) * (request->partition_count + 1));
-		for (int i = 0; i < request->partition_count; ++i) {
-			partition_adress[i] = (long) request->buf_start
-					+ i * type_extned * request->partition_length;
-
-			size_t needed_bytes = snprintf(NULL, 0, "Start MSG Part %i\n", i)
-					+ 1;
-			msg_partitions[i] = malloc(needed_bytes);
-			sprintf(msg_partitions[i], "Start MSG Part %i\n", i);
-		}
-
-		partition_adress[request->partition_count] = (long) request->buf_start
-				+ request->partition_count * type_extned
-						* request->partition_length;
-		size_t needed_bytes = snprintf(NULL, 0, "End of Message") + 1;
-		msg_partitions[request->partition_count] = malloc(needed_bytes);
-		sprintf(msg_partitions[request->partition_count], "End of Message");
-
-		int chunks = (loop_max - loop_min) / chunk_size;
-
-		char **msg_chunks_begin = malloc(sizeof(char*) * chunks);
-		long *chunk_adress_begin = malloc(sizeof(long) * chunks);
-		char **msg_chunks_end = malloc(sizeof(char*) * chunks);
-		long *chunk_adress_end = malloc(sizeof(long) * chunks);
-
-		for (int i = 0; i < chunks; ++i) {
-			long min_chunk_iter = loop_min + i * chunk_size;
-			long max_chunk_iter = loop_min + i * (chunk_size + 1);
-
-			// not outside loop bounds
-			min_chunk_iter =
-					min_chunk_iter < loop_min ? loop_min : min_chunk_iter;
-			max_chunk_iter =
-					max_chunk_iter < loop_max ? loop_max : max_chunk_iter;
-
-			chunk_adress_begin[i] = A_min * min_chunk_iter + B_min;
-			chunk_adress_end[i] = A_max * max_chunk_iter + B_max;
-
-			size_t needed_bytes = snprintf(NULL, 0, "Start Loop Chunk %i\n", i)
-					+ 1;
-			msg_chunks_begin[i] = malloc(needed_bytes);
-			sprintf(msg_chunks_begin[i], "Start Loop Chunk %i\n", i);
-
-			needed_bytes = snprintf(NULL, 0, "End Loop Chunk %i\n", i) + 1;
-			msg_chunks_end[i] = malloc(needed_bytes);
-			sprintf(msg_chunks_end[i], "End Loop Chunk %i\n", i);
-		}
-
-		int current_chunk_begin = 0;
-		int current_chunk_end = 0;
-		int current_partition = 0;
-
-		while (current_chunk_begin < chunks || current_chunk_end < chunks
-				|| current_partition <= request->partition_count) {
-
-			long curr_chunk_add_begin =
-					current_chunk_begin < chunks ?
-							chunk_adress_begin[current_chunk_begin] : LONG_MAX;
-			long curr_chunk_add_end =
-					current_chunk_end < chunks ?
-							chunk_adress_end[current_chunk_end] : LONG_MAX;
-			long curr_P =
-					current_partition <= request->partition_count ?
-							partition_adress[current_partition] : LONG_MAX;
-
-			// lowest
-			if (curr_chunk_add_begin < curr_chunk_add_end
-					&& curr_chunk_add_begin < curr_P) {
-				printf("0x%.8lX: %s", chunk_adress_begin[current_chunk_begin],
-						msg_chunks_begin[current_chunk_begin]);
-				current_chunk_begin++;
-			} else if (curr_chunk_add_end < curr_P) {
-				printf("0x%.8lX: %s", chunk_adress_end[current_chunk_end],
-						msg_chunks_end[current_chunk_end]);
-				current_chunk_end++;
-			} else {
-				printf("0x%.8lX: %s", partition_adress[current_partition],
-						msg_partitions[current_partition]);
-				current_partition++;
-			}
-
-		}
-
+		debug_printing(type_extned, loop_max, loop_min, chunk_size, A_min,
+				B_min, A_max, B_max, request);
 	}
 
 //TODO which values can be inferred for the r/w mem access on the buffer regarding the loop index
