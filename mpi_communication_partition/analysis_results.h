@@ -21,6 +21,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/Pass.h"
 
 class RequiredAnalysisResults {
@@ -30,6 +31,7 @@ public:
   llvm::AAResults *getAAResults(llvm::Function *f);
   llvm::LoopInfo *getLoopInfo(llvm::Function *f);
   llvm::ScalarEvolution *getSE(llvm::Function *f);
+  llvm::DominatorTree* getDomTree(llvm::Function *f);
 
   llvm::TargetLibraryInfo *getTLI();
 
@@ -40,6 +42,8 @@ private:
   llvm::LoopInfo *current_LI;
   llvm::Function *current_SE_function;
   llvm::ScalarEvolution *current_SE;
+  llvm::Function *current_Dtree_function;
+  llvm::DominatorTree *current_Dtree;
 
   llvm::TargetLibraryInfo *TLI;
   // reference to the pass

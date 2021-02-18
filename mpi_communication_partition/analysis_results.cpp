@@ -24,52 +24,65 @@ using namespace llvm;
 
 RequiredAnalysisResults::RequiredAnalysisResults(Pass *parent_pass) {
 
-  assertion_checker_pass = parent_pass;
+	assertion_checker_pass = parent_pass;
 
-  assert(mpi_func != nullptr &&
-         "The search for MPI functions should be made first");
+	assert(
+			mpi_func != nullptr
+					&& "The search for MPI functions should be made first");
 
-  // yust give it any function, the Function is not used at all
-  // dont know why the api has changed here...
-  TLI = &assertion_checker_pass->getAnalysis<TargetLibraryInfoWrapperPass>()
-             .getTLI(*mpi_func->mpi_init);
+	// yust give it any function, the Function is not used at all
+	// dont know why the api has changed here...
+	TLI =
+			&assertion_checker_pass->getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(
+					*mpi_func->mpi_init);
 
-  current_LI_function = nullptr;
-  current_SE_function = nullptr;
-  current_AA_function = nullptr;
-  current_LI = nullptr;
-  current_SE = nullptr;
-  current_AA = nullptr;
+	current_LI_function = nullptr;
+	current_SE_function = nullptr;
+	current_AA_function = nullptr;
+	current_LI = nullptr;
+	current_SE = nullptr;
+	current_AA = nullptr;
 }
 
-llvm::AAResults *RequiredAnalysisResults::getAAResults(llvm::Function *f) {
-  if (current_AA_function != f) {
-    current_AA_function = f;
-    current_AA = &assertion_checker_pass->getAnalysis<AAResultsWrapperPass>(*f)
-                      .getAAResults();
-  }
+llvm::AAResults* RequiredAnalysisResults::getAAResults(llvm::Function *f) {
+	if (current_AA_function != f) {
+		current_AA_function = f;
+		current_AA = &assertion_checker_pass->getAnalysis<AAResultsWrapperPass>(
+				*f).getAAResults();
+	}
 
-  return current_AA;
+	return current_AA;
 }
 
-llvm::LoopInfo *RequiredAnalysisResults::getLoopInfo(llvm::Function *f) {
-  if (current_LI_function != f) {
-    current_LI_function = f;
-    current_LI = &assertion_checker_pass->getAnalysis<LoopInfoWrapperPass>(*f)
-                      .getLoopInfo();
-  }
+llvm::LoopInfo* RequiredAnalysisResults::getLoopInfo(llvm::Function *f) {
+	if (current_LI_function != f) {
+		current_LI_function = f;
+		current_LI = &assertion_checker_pass->getAnalysis<LoopInfoWrapperPass>(
+				*f).getLoopInfo();
+	}
 
-  return current_LI;
-}
-llvm::ScalarEvolution *RequiredAnalysisResults::getSE(llvm::Function *f) {
-  if (current_SE_function != f) {
-    current_SE_function = f;
-    current_SE =
-        &assertion_checker_pass->getAnalysis<ScalarEvolutionWrapperPass>(*f)
-             .getSE();
-  }
-
-  return current_SE;
+	return current_LI;
 }
 
-llvm::TargetLibraryInfo *RequiredAnalysisResults::getTLI() { return TLI; }
+llvm::DominatorTree* RequiredAnalysisResults::getDomTree(llvm::Function *f) {
+	if (current_Dtree_function != f) {
+		current_Dtree_function = f;
+		current_Dtree = &assertion_checker_pass->getAnalysis<
+				DominatorTreeWrapperPass>(*f).getDomTree();
+	}
+	return current_Dtree;
+}
+
+llvm::ScalarEvolution* RequiredAnalysisResults::getSE(llvm::Function *f) {
+	if (current_SE_function != f) {
+		current_SE_function = f;
+		current_SE = &assertion_checker_pass->getAnalysis<
+				ScalarEvolutionWrapperPass>(*f).getSE();
+	}
+
+	return current_SE;
+}
+
+llvm::TargetLibraryInfo* RequiredAnalysisResults::getTLI() {
+	return TLI;
+}
