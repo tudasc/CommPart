@@ -6,6 +6,8 @@ using namespace llvm;
 
 Microtask::Microtask(CallInst *fork_call)
 {
+
+	assert(fork_call->getCalledFunction()->getName().equals("__kmpc_fork_call"));
     _fork_call = fork_call;
     _parallel_for.init = nullptr;
     _parallel_for.fini = nullptr;
