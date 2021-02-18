@@ -294,7 +294,9 @@ static void registerExperimentPass(const PassManagerBuilder&,
 //                   registerExperimentPass);
 
 static RegisterStandardPasses RegisterMyPass(
-		PassManagerBuilder::EP_OptimizerLast, registerExperimentPass);
+		PassManagerBuilder::EP_VectorizerStart, registerExperimentPass);
+// before vectorization makes analysis way harder
+//This extension point allows adding optimization passes before the vectorizer and other highly target specific optimization passes are executed.
 
 static RegisterStandardPasses RegisterMyPass0(
 		PassManagerBuilder::EP_EnabledOnOptLevel0, registerExperimentPass);
