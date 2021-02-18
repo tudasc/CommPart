@@ -38,6 +38,7 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
 #include "llvm/IR/Dominators.h"
+#include "llvm/Analysis/PostDominators.h"
 
 #include "llvm/IR/InstIterator.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
@@ -84,6 +85,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		AU.addRequired<LoopInfoWrapperPass>();
 		AU.addRequired<ScalarEvolutionWrapperPass>();
 		AU.addRequired<DominatorTreeWrapperPass>();
+		AU.addRequired<PostDominatorTreeWrapperPass>();
 	}
 	/*
 	 void getAnalysisUsage(AnalysisUsage &AU) const {

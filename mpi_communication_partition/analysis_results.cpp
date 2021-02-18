@@ -73,6 +73,16 @@ llvm::DominatorTree* RequiredAnalysisResults::getDomTree(llvm::Function *f) {
 	return current_Dtree;
 }
 
+llvm::PostDominatorTree* RequiredAnalysisResults::getPostDomTree(llvm::Function *f) {
+	if (current_PDtree_function != f) {
+		current_PDtree_function = f;
+		current_PDtree = &assertion_checker_pass->getAnalysis<
+				PostDominatorTreeWrapperPass>(*f).getPostDomTree();
+	}
+	return current_PDtree;
+}
+
+
 llvm::ScalarEvolution* RequiredAnalysisResults::getSE(llvm::Function *f) {
 	if (current_SE_function != f) {
 		current_SE_function = f;
