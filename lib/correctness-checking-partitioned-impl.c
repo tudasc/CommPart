@@ -245,6 +245,67 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 	}
 }
 
+#define MAXIMUM_ITERATIONS 10
+
+long find_valid_partition_size_bytes(long count, long type_extend,
+		long requested_partition_size_bytes) {
+
+	long requested_partition_size_datamembers = requested_partition_size_bytes
+			/ type_extend;
+	// request more if necessary
+	if (requested_partition_size_bytes % type_extend != 0) {
+		++requested_partition_size_datamembers;
+	}
+
+	long sending_size = count * type_extend;
+
+	if (requested_partition_size_bytes > sending_size) {
+		return sending_size;
+	}
+
+	int partition_size_canidate = count / requested_partition_size_datamembers;
+
+	if (count % requested_partition_size_datamembers == 0) {
+		return partition_size_canidate * type_extend;
+	}
+
+	int sign = 1;
+	int offset = 1;
+
+	long X_start = partition_size_canidate;
+
+	int loop_count = 0;
+
+	do {
+
+		if (sign > 0) {
+			partition_size_canidate = X_start + sign * offset;
+			sign *= -1;
+		}
+
+		else {
+
+			partition_size_canidate = X_start + sign * offset;
+			sign *= -1;
+			offset++;
+
+		}
+		loop_count++;
+
+	} while (count % partition_size_canidate != 0
+			|| loop_count < MAXIMUM_ITERATIONS);
+
+	if (count % partition_size_canidate) {
+		return partition_size_canidate * type_extend;
+	} else {
+		printf(
+				"Was not able to calculate a good partition in %d Iterations: will not partiton this operation\n ",
+				MAXIMUM_ITERATIONS);
+		return sending_size;
+	}
+
+}
+
 int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		int dest, int tag, MPI_Comm comm, MPIX_Request *request,
 		// loop info
@@ -281,21 +342,23 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		// int division: rounding down is implicit
 		unsigned requested_partition_size_byte = sending_size / access_size;
 
-		unsigned requested_partition_size_datamembers =
-				(requested_partition_size_byte / type_extned);
-		if (requested_partition_size_byte % type_extned != 0) {
-			requested_partition_size_datamembers++;
-		}
-		requested_partition_size_byte = requested_partition_size_datamembers
-				* type_extned;
+		unsigned valid_partition_size_byte = find_valid_partition_size_bytes(
+				count, type_extned, requested_partition_size_byte);
 
-		unsigned valid_partition_size_byte = type_extned;
-		unsigned valid_partition_size_datamembers = 1;
-		int partitions = count;
+		unsigned valid_partition_size_datamembers = valid_partition_size_byte
+				/ type_extned;
 
-		//TODO calculate this!
+		assert(valid_partition_size_byte % type_extned == 0);
+
+		int partitions = count / valid_partition_size_datamembers;
+		assert(count % valid_partition_size_datamembers == 0);
+		assert(
+				partitions * valid_partition_size_datamembers * type_extned
+						== sending_size);
 
 		assert(valid_partition_size_byte % sending_size == 0);
+		assert(valid_partition_size_byte % type_extned == 0);
+		assert(valid_partition_size_datamembers * partitions == count);
 
 		/*
 		 int partition_size_datamembers = 0;
@@ -358,8 +421,12 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		}
 
 		//DEBUG PRINTING
-		debug_printing(type_extned, loop_max, loop_min, chunk_size, A_min,
-				B_min, A_max, B_max, request);
+		int rank;
+		MPI_Comm_rank(comm, &rank);
+		if (rank == 0) {
+			debug_printing(type_extned, loop_max, loop_min, chunk_size, A_min,
+					B_min, A_max, B_max, request);
+		}
 	}
 
 //TODO which values can be inferred for the r/w mem access on the buffer regarding the loop index
