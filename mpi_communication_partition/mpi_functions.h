@@ -65,6 +65,12 @@ struct mpi_functions {
   llvm::Function *mpix_Wait = nullptr;
   llvm::Function *mpix_Request_free = nullptr;
 
+  // library funcs to handle the partitioning
+  llvm::Function *partition_sending_op = nullptr;
+  llvm::Function *signoff_partitions_after_loop_iter = nullptr;
+
+
+
   std::set<llvm::Function *>
       conflicting_functions; // may result in a conflict for msg overtaking
   std::set<llvm::Function *>

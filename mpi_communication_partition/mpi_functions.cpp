@@ -132,25 +132,32 @@ struct mpi_functions* get_used_mpi_functions(llvm::Module &M) {
 			result->mpix_Pready_range = f;
 		} else if (f->getName().equals("MPIX_Request_free")) {
 			result->mpix_Request_free = f;
+
+			// library funcs to handle the partitioning
+		} else if (f->getName().equals("partition_sending_op")) {
+			result->partition_sending_op = f;
+
+		} else if (f->getName().equals("signoff_partitions_after_loop_iter")) {
+			result->signoff_partitions_after_loop_iter = f;
 		}
 	}
 
 	//check if all defined functions are present
 	bool all_present = (result->mpix_Psend_init != nullptr)
 			&& (result->mpix_Precv_init != nullptr)
-			&& (result->mpix_Start != nullptr)
-			&& (result->mpix_Wait != nullptr)
+			&& (result->mpix_Start != nullptr) && (result->mpix_Wait != nullptr)
 			&& (result->mpix_Pready != nullptr)
 			&& (result->mpix_Pready_range != nullptr)
 			&& (result->mpix_Request_free != nullptr);
+	assert(result->partition_sending_op!=nullptr && result->signoff_partitions_after_loop_iter!=nullptr);
 
 	assert (all_present && "Could not find all operations for Partitioned communication to be defined");
 
 	// get type of mpix request for allocation of needed requests
-	PointerType* pointer_t = dyn_cast<PointerType>(result->mpix_Request_free->getFunctionType()->getParamType(0)) ;
+	PointerType *pointer_t = dyn_cast<PointerType>(
+			result->mpix_Request_free->getFunctionType()->getParamType(0));
 	result->mpix_request_type = pointer_t->getElementType();
-	assert (result->mpix_request_type);
-
+	assert(result->mpix_request_type);
 
 	return result;
 }
