@@ -53,6 +53,7 @@
 #include "function_coverage.h"
 #include "implementation_specific.h"
 #include "mpi_functions.h"
+#include "Openmp_region.h"
 
 using namespace llvm;
 
@@ -136,12 +137,20 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 			if (isa<SCEVAddExpr>(c)) {
 				errs() << " add expr\n";
 
-				assert(c->getNumOperands() == 2);
+				assert(c->getNumOperands() > 1);
 
-				auto *result = builder.CreateAdd(
-						get_scev_value(c->getOperand(0), insert_before),
-						get_scev_value(c->getOperand(1), insert_before), "",
-						c->hasNoUnsignedWrap(), c->hasNoSignedWrap());
+				int operand = 1;
+				Value *Left_side = get_scev_value(c->getOperand(0),
+						insert_before);
+				while (operand < c->getNumOperands()) {
+					Left_side = builder.CreateAdd(Left_side,
+							get_scev_value(c->getOperand(operand),
+									insert_before), "", c->hasNoUnsignedWrap(),
+							c->hasNoSignedWrap());
+					operand++;
+				}
+
+				auto *result = Left_side;
 
 				result->print(errs());
 				errs() << "\n";
@@ -149,11 +158,19 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 			}
 			if (isa<SCEVMulExpr>(c)) {
 				errs() << "mul expr\n";
-				assert(c->getNumOperands() == 2);
-				return builder.CreateMul(
-						get_scev_value(c->getOperand(0), insert_before),
-						get_scev_value(c->getOperand(1), insert_before), "",
-						c->hasNoUnsignedWrap(), c->hasNoSignedWrap());
+				assert(c->getNumOperands() > 1);
+
+				int operand = 1;
+				Value *Left_side = get_scev_value(c->getOperand(0),
+						insert_before);
+				while (operand < c->getNumOperands()) {
+					get_scev_value(c->getOperand(operand), insert_before), "", c->hasNoUnsignedWrap(), c->hasNoSignedWrap()
+					);
+					operand++;
+				}
+
+				auto *result = Left_side;
+				return result;
 			}
 		}
 		if (isa<SCEVMinMaxExpr>(scev)) {
@@ -177,7 +194,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		//Debug(M.dump(););
 
-		//M.print(errs(), nullptr);
+		M.print(errs(), nullptr);
 
 		mpi_func = get_used_mpi_functions(M);
 		if (!is_mpi_used(mpi_func)) {
@@ -228,14 +245,13 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 					errs() << "\n";
 
 					//A
-					auto step = get_scev_value(scn->getStepRecurrence(*se), gep);
+					auto step = get_scev_value(scn->getStepRecurrence(*se),
+							gep);
 					// x is iteration count
 					//B
 					auto start = get_scev_value(scn->getStart(), gep);
 
-
 				}
-
 
 			}
 
