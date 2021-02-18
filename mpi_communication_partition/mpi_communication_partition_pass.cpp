@@ -164,8 +164,10 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				Value *Left_side = get_scev_value(c->getOperand(0),
 						insert_before);
 				while (operand < c->getNumOperands()) {
-					get_scev_value(c->getOperand(operand), insert_before), "", c->hasNoUnsignedWrap(), c->hasNoSignedWrap()
-					);
+					builder.CreateMul(Left_side,
+							get_scev_value(c->getOperand(operand),
+									insert_before), "", c->hasNoUnsignedWrap(),
+							c->hasNoSignedWrap());
 					operand++;
 				}
 
