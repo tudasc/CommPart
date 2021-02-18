@@ -25,4 +25,15 @@
 #define Debug(x)
 #endif
 
+// utility makro for debugging:
+#define ASK_TO_CONTINIUE                                                                      \
+    int ask_for = 0;                                                                          \
+    printf("Continiue? (0 to abort):");                                                       \
+    scanf("%d", &ask_for);                                                                    \
+    if (!ask_for)                                                                             \
+    {                                                                                         \
+        printf("Aborting\n");                                                                 \
+        exit(0);                                                                              \
+    }
+
 #endif
