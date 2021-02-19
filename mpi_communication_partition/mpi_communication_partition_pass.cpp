@@ -58,6 +58,7 @@
 #include "implementation_specific.h"
 #include "mpi_functions.h"
 #include "Openmp_region.h"
+#include "helper.h"
 
 using namespace llvm;
 
@@ -249,7 +250,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 	// nullptr if not found
 	Instruction* get_last_instruction(std::vector<Instruction*> inst_list) {
 
-		if (inst_list.size()==0){
+		if (inst_list.size() == 0) {
 			return nullptr;
 		}
 
@@ -304,7 +305,146 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		return false;
 	}
 
-	// Pass starts here
+	//TODO change discover of buffer ptr
+	// buffer ptr may be the higher order ptr (before GEP)
+	// send might be done on ptr resulting from GEP
+
+	// returns true if fork call is handled
+	// false if thread doesn't write to buffer and nothing need to be done
+	bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
+
+		auto *buffer_ptr_in_main = send_call->getArgOperand(0);
+
+		auto *buffer_ptr = parallel_region->get_value_in_mikrotask(
+				buffer_ptr_in_main);
+
+		if (buffer_ptr->hasNoCaptureAttr()
+				&& buffer_ptr->hasAttribute(Attribute::ReadOnly)) {
+			// readonly and nocapture: nothing need to be done
+			return false;
+		}
+
+		if (parallel_region->get_parallel_for()) {
+			// we have to build a list of all accesses to the buffer
+
+			auto store_list = get_instruction_in_function<StoreInst>(
+					parallel_region->get_function());
+
+			auto call_list = get_instruction_in_function<CallBase>(
+					parallel_region->get_function());
+
+			// make shure no called function writes the msg buffer (such calls should be inlined beforehand)
+
+			auto AA = analysis_results->getAAResults(
+					parallel_region->get_function());
+
+			for (auto *call : call_list) {
+
+				// check if call is openmp RTL call
+				if (!call->getCalledFunction()->getName().startswith(
+						"__kmpc_")) {
+
+					//TODO do i need to handle MPi calls seperately?
+
+					for (auto &a : call->args()) {
+
+						if (auto *arg = dyn_cast<Value>(a)) {
+
+							if (arg->getType()->isPointerTy()) {
+
+								if (!AA->isNoAlias(buffer_ptr, arg)) {
+
+									// may alias or must alias
+									//TODO Problem ptr is a function arg and may therefore alias with everything in function!
+
+									//TODO check if nocapture and readonly in tgt function
+
+									errs()
+											<< "Found call with ptr that may alias, analysis is not detailed here\n";
+
+									if (true) {
+										// found function that accesses the buffer: threat the whole parallel as store
+										//TODO maybe force inlining to allow further analysis?
+										handle_modification_location(send_call,
+												parallel_region->get_fork_call());
+										return true;
+									}
+								}
+							}
+						}
+					}
+				}
+				// checked all call instructions
+
+				// need to check all store instructions
+				// first we need to check if there is a store PAST the for loop accessing the ptr
+				auto *linfo = analysis_results->getLoopInfo(
+						parallel_region->get_function());
+				// we checed for the presence of ahte openmp loobs before
+				assert(!linfo->empty());
+
+				auto *DT = analysis_results->getDomTree(
+						parallel_region->get_function());
+				auto *PDT = analysis_results->getPostDomTree(
+						parallel_region->get_function());
+
+				//TODO implement analysis of multiple for loops??
+				auto *loop_exit = parallel_region->get_parallel_for()->fini;
+
+
+				//TODO It fails in this lambda!
+				bool are_all_stores_before_loop_finish = std::all_of(store_list.begin(),
+						store_list.end(),
+						[AA, PDT, buffer_ptr, loop_exit](llvm::StoreInst *s) {
+
+							errs() << AA;
+							errs() << "\n";
+							errs() << buffer_ptr;
+							buffer_ptr->print(errs());
+							//errs() << "\n";
+							//errs() << s;
+							errs() << "\n";
+							errs() << s->getPointerOperand();
+							s->getPointerOperand()->print(errs());
+							errs() << "\n";
+							if (!AA->isNoAlias(buffer_ptr,
+									s->getPointerOperand())) {
+								// may alias
+								return PDT->dominates(loop_exit, s);
+							}
+							return true;
+						});
+				errs() << "All before loop exit?" << are_all_stores_before_loop_finish
+						<< "\n";
+				if (!are_all_stores_before_loop_finish){
+					//cannot determine a partitioning if access is outside the loop
+					handle_modification_location(send_call,
+							parallel_region->get_fork_call());
+					return true;
+				}
+
+				//TODO do we need to consider stores before the loop?
+
+				// now we need to get min and maximum ax+b for every store in the loop
+
+			}
+
+		} else {
+			// no parallel for
+			// TODO handle task pragma?
+
+			// we cannot split the buffer accesses among the different threads, need the handle this fork call as a write function call
+
+			handle_modification_location(send_call,
+					parallel_region->get_fork_call());
+			return true;
+		}
+
+		return false;
+
+	}
+
+// Pass starts here
 	virtual bool runOnModule(Module &M) {
 
 		//Debug(M.dump(););
@@ -369,7 +509,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 						//TODO need to refactor this!
 						Instruction *to_handle = get_last_instruction(
 								to_analyze);
-						bool handled = false;				// flag to abort
+						bool handled = false;		// flag to abort
 						while (!handled && to_handle != nullptr) {
 
 							to_handle->print(errs());
@@ -405,13 +545,12 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 								assert(
 										call->hasArgument(buffer_ptr)
 												&& "You arer calling an MPI sendbuffer?\n I refuse to analyze this dak pointer magic!\n");
-								//TODO assert that this is actually an arg operand and not the function address?
 
 								unsigned operand_position = 0;
 								while (call->getArgOperand(operand_position)
 										!= buffer_ptr) {
 									++operand_position;
-								}// will terminate as assert above secured that
+								}// will terminate, as assert above secured that
 
 								if (operand_position
 										>= call->getCalledFunction()->getFunctionType()->getNumParams()) {
@@ -434,7 +573,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 									Microtask *parallel_region = new Microtask(
 											call);
 
-									//TODO continue analysis here tomorrow
+									handled = handle_fork_call(parallel_region,
+											send_call);
 
 								} else {
 									if (ptr_argument->hasNoCaptureAttr()) {
@@ -515,7 +655,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		return modification;
 
 	}
-};
+}
+;
 
 // class MSGOrderRelaxCheckerPass
 }// namespace

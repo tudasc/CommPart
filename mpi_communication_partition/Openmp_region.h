@@ -66,6 +66,12 @@ class Microtask
     ReductionData *get_reduction();
 
     std::vector<std::pair<llvm::Value *,llvm::Value *>> &get_shared_variables();
+
+    // gets the value that corresponds to the given value from main
+    llvm::Argument* get_value_in_mikrotask(llvm::Value* val);
+    // get the value that corresponds to the given value in microtask
+    llvm::Value* get_value_in_main(llvm::Value* val);
+
 };
 
 #endif
