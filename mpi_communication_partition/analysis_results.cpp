@@ -69,29 +69,16 @@ RequiredAnalysisResults::RequiredAnalysisResults(Pass *parent_pass, Module* M) {
 }
 
 llvm::AAResults* RequiredAnalysisResults::getAAResults(llvm::Function *f) {
-	/*if (current_AA_function != f) {
+	if (current_AA_function != f) {
 		current_AA_function = f;
 		current_AA = &assertion_checker_pass->getAnalysis<AAResultsWrapperPass>(
 				*f).getAAResults();
 
 		errs() << "Get AA for Function" << f->getName() <<"\n";
 
-	}*/
+	}
 
-	auto*result= new AAResults(*TLI);
-	// global
-	result->addAAResult(assertion_checker_pass->getAnalysis<GlobalsAAWrapperPass>().getResult());
-	result->addAAResult(assertion_checker_pass->getAnalysis<ScopedNoAliasAAWrapperPass>().getResult());
-	result->addAAResult(assertion_checker_pass->getAnalysis<TypeBasedAAWrapperPass>().getResult());
-
-	// per function
-	result->addAAResult(assertion_checker_pass->getAnalysis<SCEVAAWrapperPass>(*f).getResult());
-
-
-
-
-	return result;
-	//return current_AA;
+	return current_AA;
 }
 
 llvm::LoopInfo* RequiredAnalysisResults::getLoopInfo(llvm::Function *f) {

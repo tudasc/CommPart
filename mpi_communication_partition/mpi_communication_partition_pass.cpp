@@ -98,14 +98,14 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 	void getAnalysisUsage(AnalysisUsage &AU) const {
 		AU.addRequired<TargetLibraryInfoWrapperPass>();
 		AU.addRequiredTransitive<AAResultsWrapperPass>();
-		AU.addRequired<AAResultsWrapperPass>();
+		//AU.addRequired<AAResultsWrapperPass>();
 		AU.addRequired<LoopInfoWrapperPass>();
 		AU.addRequired<ScalarEvolutionWrapperPass>();
 		AU.addRequired<DominatorTreeWrapperPass>();
 		AU.addRequired<PostDominatorTreeWrapperPass>();
 
 		// various AA implementations
-
+/*
 		AU.addRequired<ScopedNoAliasAAWrapperPass>();
 		AU.addRequired<TypeBasedAAWrapperPass>();
 		// USING THIS WILL RESULT IN A CRASH there my be a bug
@@ -116,7 +116,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		// these also result in bug
 		AU.addRequired<CFLAndersAAWrapperPass>();
 		AU.addRequired<CFLSteensAAWrapperPass>();
-
+*/
 	}
 	/*
 	 void getAnalysisUsage(AnalysisUsage &AU) const {
@@ -353,6 +353,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 			return false;
 		}
 
+		errs() << "Handle Fork Call\n";
+
 		if (parallel_region->get_parallel_for()) {
 			// we have to build a list of all accesses to the buffer
 
@@ -364,9 +366,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 			// make shure no called function writes the msg buffer (such calls should be inlined beforehand)
 
-			auto AA = analysis_results->getAAResults(
-					parallel_region->get_function());
-
+			auto* AA = &getAnalysis<AAResultsWrapperPass>(
+					*parallel_region->get_function()).getAAResults();
 
 			for (auto *call : call_list) {
 
@@ -375,6 +376,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 						"__kmpc_")) {
 
 					//TODO do i need to handle MPi calls seperately?
+
+					call->dump();
 
 					for (auto &a : call->args()) {
 
@@ -421,12 +424,29 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				//TODO implement analysis of multiple for loops??
 				auto *loop_exit = parallel_region->get_parallel_for()->fini;
 
+
+				AA = analysis_results->getAAResults(
+								parallel_region->get_function());
+				/*
+				bool are_all_stores_before_loop_finish = true;
+
+
+				for (auto *s : store_list) {
+					if (!AA->isNoAlias(buffer_ptr, s->getPointerOperand())) {
+						// may alias --> domitate analysis required
+						are_all_stores_before_loop_finish =
+								are_all_stores_before_loop_finish
+										&& PDT->dominates(loop_exit, s);
+					}
+
+				}
+*/
 				bool are_all_stores_before_loop_finish
 				 = std::all_of(
 				 store_list.begin(), store_list.end(),
 				 [AA, PDT, buffer_ptr, loop_exit](llvm::StoreInst *s) {
 
-
+/*
 				 errs() << AA;
 				 errs() << "\n";
 				 errs() << buffer_ptr;
@@ -443,7 +463,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				 errs() << "Is no alias? "
 				 << (AA->isNoAlias(buffer_ptr,
 				 s->getPointerOperand())) << "\n";
-
+*/
 				 if (!AA->isNoAlias(buffer_ptr,
 				 s->getPointerOperand())) {
 				 // may alias --> domitate analysis required

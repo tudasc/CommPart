@@ -29,7 +29,7 @@ class RequiredAnalysisResults {
 public:
   RequiredAnalysisResults(llvm::Pass *parent_pass, llvm::Module* M);
   ~RequiredAnalysisResults(){};
-  llvm::AAResults *getAAResults(llvm::Function *f);
+  llvm::AAResults* getAAResults(llvm::Function *f);
   llvm::LoopInfo *getLoopInfo(llvm::Function *f);
   llvm::ScalarEvolution *getSE(llvm::Function *f);
   llvm::DominatorTree* getDomTree(llvm::Function *f);
@@ -39,7 +39,7 @@ public:
 
 private:
   llvm::Function *current_AA_function;
-  llvm::AAResults *current_AA;
+  llvm::AAResults* current_AA;
   llvm::Function *current_LI_function;
   llvm::LoopInfo *current_LI;
   llvm::Function *current_SE_function;
