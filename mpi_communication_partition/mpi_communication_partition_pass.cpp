@@ -44,6 +44,20 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 
+// AA implementations
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/CFLAndersAliasAnalysis.h"
+#include "llvm/Analysis/CFLSteensAliasAnalysis.h"
+#include "llvm/Analysis/CaptureTracking.h"
+#include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/ObjCARCAliasAnalysis.h"
+#include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
+#include "llvm/Analysis/ScopedNoAliasAA.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TypeBasedAliasAnalysis.h"
+
 #include <assert.h>
 //#include <mpi.h>
 #include <cstring>
@@ -84,10 +98,25 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 	void getAnalysisUsage(AnalysisUsage &AU) const {
 		AU.addRequired<TargetLibraryInfoWrapperPass>();
 		AU.addRequiredTransitive<AAResultsWrapperPass>();
+		AU.addRequired<AAResultsWrapperPass>();
 		AU.addRequired<LoopInfoWrapperPass>();
 		AU.addRequired<ScalarEvolutionWrapperPass>();
 		AU.addRequired<DominatorTreeWrapperPass>();
 		AU.addRequired<PostDominatorTreeWrapperPass>();
+
+		// various AA implementations
+
+		AU.addRequired<ScopedNoAliasAAWrapperPass>();
+		AU.addRequired<TypeBasedAAWrapperPass>();
+		// USING THIS WILL RESULT IN A CRASH there my be a bug
+		AU.addRequired<BasicAAWrapperPass>();
+		AU.addRequired<GlobalsAAWrapperPass>();
+		AU.addRequired<SCEVAAWrapperPass>();
+
+		// these also result in bug
+		AU.addRequired<CFLAndersAAWrapperPass>();
+		AU.addRequired<CFLSteensAAWrapperPass>();
+
 	}
 	/*
 	 void getAnalysisUsage(AnalysisUsage &AU) const {
@@ -338,6 +367,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 			auto AA = analysis_results->getAAResults(
 					parallel_region->get_function());
 
+
 			for (auto *call : call_list) {
 
 				// check if call is openmp RTL call
@@ -380,7 +410,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				// first we need to check if there is a store PAST the for loop accessing the ptr
 				auto *linfo = analysis_results->getLoopInfo(
 						parallel_region->get_function());
-				// we checed for the presence of ahte openmp loobs before
+				// we checed for the presence of the openmp loobs before
 				assert(!linfo->empty());
 
 				auto *DT = analysis_results->getDomTree(
@@ -391,32 +421,41 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				//TODO implement analysis of multiple for loops??
 				auto *loop_exit = parallel_region->get_parallel_for()->fini;
 
+				bool are_all_stores_before_loop_finish
+				 = std::all_of(
+				 store_list.begin(), store_list.end(),
+				 [AA, PDT, buffer_ptr, loop_exit](llvm::StoreInst *s) {
 
-				//TODO It fails in this lambda!
-				bool are_all_stores_before_loop_finish = std::all_of(store_list.begin(),
-						store_list.end(),
-						[AA, PDT, buffer_ptr, loop_exit](llvm::StoreInst *s) {
 
-							errs() << AA;
-							errs() << "\n";
-							errs() << buffer_ptr;
-							buffer_ptr->print(errs());
-							//errs() << "\n";
-							//errs() << s;
-							errs() << "\n";
-							errs() << s->getPointerOperand();
-							s->getPointerOperand()->print(errs());
-							errs() << "\n";
-							if (!AA->isNoAlias(buffer_ptr,
-									s->getPointerOperand())) {
-								// may alias
-								return PDT->dominates(loop_exit, s);
-							}
-							return true;
-						});
-				errs() << "All before loop exit?" << are_all_stores_before_loop_finish
-						<< "\n";
-				if (!are_all_stores_before_loop_finish){
+				 errs() << AA;
+				 errs() << "\n";
+				 errs() << buffer_ptr;
+				 buffer_ptr->print(errs());
+				 //errs() << "\n";
+				 //errs() << s;
+				 errs() << "\n";
+				 errs() << s->getPointerOperand();
+				 s->getPointerOperand()->print(errs());
+				 errs() << "\n";
+				 errs() << "of same function? "
+				 << (buffer_ptr->getParent()
+				 == s->getFunction()) << "\n";
+				 errs() << "Is no alias? "
+				 << (AA->isNoAlias(buffer_ptr,
+				 s->getPointerOperand())) << "\n";
+
+				 if (!AA->isNoAlias(buffer_ptr,
+				 s->getPointerOperand())) {
+				 // may alias --> domitate analysis required
+				 return PDT->dominates(loop_exit, s);
+				 }
+				 // can not alias --> dont care wether it is after the loop
+				 return true;
+				 });
+
+				errs() << "All before loop exit?"
+						<< are_all_stores_before_loop_finish << "\n";
+				if (!are_all_stores_before_loop_finish) {
 					//cannot determine a partitioning if access is outside the loop
 					handle_modification_location(send_call,
 							parallel_region->get_fork_call());
@@ -449,7 +488,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		//Debug(M.dump(););
 
-		M.print(errs(), nullptr);
+		//M.print(errs(), nullptr);
 
 		mpi_func = get_used_mpi_functions(M);
 		if (!is_mpi_used(mpi_func)) {
@@ -460,7 +499,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		bool modification = false;
 
-		analysis_results = new RequiredAnalysisResults(this);
+		analysis_results = new RequiredAnalysisResults(this, &M);
 
 		//function_metadata = new FunctionMetadata(analysis_results->getTLI(), M);
 
@@ -672,8 +711,7 @@ static void registerExperimentPass(const PassManagerBuilder&,
 
 // static RegisterStandardPasses
 //    RegisterMyPass(PassManagerBuilder::EP_ModuleOptimizerEarly,
-//                   registerExperimentPass);
-
+//
 static RegisterStandardPasses RegisterMyPass(
 		PassManagerBuilder::EP_VectorizerStart, registerExperimentPass);
 // before vectorization makes analysis way harder

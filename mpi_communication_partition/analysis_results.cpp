@@ -20,9 +20,24 @@
 
 #include "analysis_results.h"
 
+// AA implementations
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/CFLAndersAliasAnalysis.h"
+#include "llvm/Analysis/CFLSteensAliasAnalysis.h"
+#include "llvm/Analysis/CaptureTracking.h"
+#include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/ObjCARCAliasAnalysis.h"
+#include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
+#include "llvm/Analysis/ScopedNoAliasAA.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/TypeBasedAliasAnalysis.h"
+
+
 using namespace llvm;
 
-RequiredAnalysisResults::RequiredAnalysisResults(Pass *parent_pass) {
+RequiredAnalysisResults::RequiredAnalysisResults(Pass *parent_pass, Module* M) {
 
 	assertion_checker_pass = parent_pass;
 
@@ -30,28 +45,53 @@ RequiredAnalysisResults::RequiredAnalysisResults(Pass *parent_pass) {
 			mpi_func != nullptr
 					&& "The search for MPI functions should be made first");
 
-	// yust give it any function, the Function is not used at all
+	// just give it any function, the Function is not used at all
 	// dont know why the api has changed here...
 	TLI =
 			&assertion_checker_pass->getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(
 					*mpi_func->mpi_init);
 
+
+
+
 	current_LI_function = nullptr;
 	current_SE_function = nullptr;
 	current_AA_function = nullptr;
+	current_Dtree_function= nullptr;
+	current_PDtree_function= nullptr;
 	current_LI = nullptr;
 	current_SE = nullptr;
 	current_AA = nullptr;
+	current_Dtree = nullptr;
+	current_PDtree=nullptr;
+
+
 }
 
 llvm::AAResults* RequiredAnalysisResults::getAAResults(llvm::Function *f) {
-	if (current_AA_function != f) {
+	/*if (current_AA_function != f) {
 		current_AA_function = f;
 		current_AA = &assertion_checker_pass->getAnalysis<AAResultsWrapperPass>(
 				*f).getAAResults();
-	}
 
-	return current_AA;
+		errs() << "Get AA for Function" << f->getName() <<"\n";
+
+	}*/
+
+	auto*result= new AAResults(*TLI);
+	// global
+	result->addAAResult(assertion_checker_pass->getAnalysis<GlobalsAAWrapperPass>().getResult());
+	result->addAAResult(assertion_checker_pass->getAnalysis<ScopedNoAliasAAWrapperPass>().getResult());
+	result->addAAResult(assertion_checker_pass->getAnalysis<TypeBasedAAWrapperPass>().getResult());
+
+	// per function
+	result->addAAResult(assertion_checker_pass->getAnalysis<SCEVAAWrapperPass>(*f).getResult());
+
+
+
+
+	return result;
+	//return current_AA;
 }
 
 llvm::LoopInfo* RequiredAnalysisResults::getLoopInfo(llvm::Function *f) {

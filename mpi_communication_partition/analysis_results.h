@@ -27,7 +27,7 @@
 
 class RequiredAnalysisResults {
 public:
-  RequiredAnalysisResults(llvm::Pass *parent_pass);
+  RequiredAnalysisResults(llvm::Pass *parent_pass, llvm::Module* M);
   ~RequiredAnalysisResults(){};
   llvm::AAResults *getAAResults(llvm::Function *f);
   llvm::LoopInfo *getLoopInfo(llvm::Function *f);
