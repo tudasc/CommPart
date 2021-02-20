@@ -210,7 +210,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		errs() << "\n";
 		errs() << "\n";
-		gep->print(errs(), nullptr);
+		gep->print(errs());
 		errs() << "\n";
 		auto *sc = se->getSCEV(gep);
 		sc->print(errs());
