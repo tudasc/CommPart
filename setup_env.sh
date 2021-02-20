@@ -3,7 +3,7 @@
 #module use /home/tj75qeje/.modulefiles
 
 # load required modules
-ml git cmake gcc llvm mpich valgrind
+ml git cmake gcc llvm/debug mpich valgrind
 
 export CC=clang
 export CXX=clang++
@@ -19,3 +19,6 @@ export CXX=clang++
 
 # using mpich:
 
+# include path
+
+export CPATH=$CPATH:/home/tj75qeje/mpi-partitioned-communication/lib
