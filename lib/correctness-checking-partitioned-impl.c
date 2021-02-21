@@ -313,128 +313,129 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		long A_min, long B_min, long A_max, long B_max, long chunk_size,
 		long loop_min, long loop_max) {
 
-	assert(A_min > 0 && "Decrementing loops not supported yet");
-	assert(A_max > 0 && "Decrementing loops not supported yet");
-
-	void *chunk_access_start;
-	unsigned long chunk_access_length;
-	long chunk_access_stride;		//  may be negative! == overlapping access
-
-	MPI_Aint type_extned;
-	MPI_Type_extent(datatype, &type_extned);
-
-	long sending_size = type_extned * count;
-
-	long access_size = A_max * (loop_min + chunk_size) + B_max
-			+ -A_min * loop_min + B_min;
-
-	if (access_size >= sending_size) {
-		// no partitioning useful
-		int partitions = 1;
-
-		MPIX_Psend_init(buf, partitions, count, datatype, dest, tag, comm,
-		MPI_INFO_NULL, request);
-
-		return partitions;
-
-	} else {
-
-		// int division: rounding down is implicit
-		unsigned requested_partition_size_byte = sending_size / access_size;
-
-		unsigned valid_partition_size_byte = find_valid_partition_size_bytes(
-				count, type_extned, requested_partition_size_byte);
-
-		unsigned valid_partition_size_datamembers = valid_partition_size_byte
-				/ type_extned;
-
-		assert(valid_partition_size_byte % type_extned == 0);
-
-		int partitions = count / valid_partition_size_datamembers;
-		assert(count % valid_partition_size_datamembers == 0);
-		assert(
-				partitions * valid_partition_size_datamembers * type_extned
-						== sending_size);
-
-		assert(valid_partition_size_byte % sending_size == 0);
-		assert(valid_partition_size_byte % type_extned == 0);
-		assert(valid_partition_size_datamembers * partitions == count);
-
-		/*
-		 int partition_size_datamembers = 0;
-		 int partitions = 1;
-
-		 if (partition_size_byte > type_extned) {
-		 // larger: how many datamembers do we need per partition?
-		 partitions = partition_size_byte / type_extned;
-		 if (partition_size_byte % type_extned != 0) {
-		 // we need full datamembers
-		 partitions++;
-		 }
-
-		 } else if (partition_size_byte < type_extned) {
-		 // smaller: each partition has 1 datamember
-		 partitions = count;
-		 partition_size_datamembers = 1;
-
-		 } else {
-		 // equals: each partition has 1 datamember
-		 partitions = count;
-		 partition_size_datamembers = 1;
-		 }
-		 */
-
-		printf("Partitioned send operations into %d Partitions\n", partitions);
-		MPIX_Psend_init(buf, partitions, valid_partition_size_datamembers,
-				datatype, dest, tag, comm,
-				MPI_INFO_NULL, request);
-
-		// calculate local overlap
-		//TODO is there a better way than calculating it for each partition?
-		// one can parallelize it at least?
-
-		request->local_overlap = calloc(partitions, sizeof(int));
-		request->local_overlap_count = malloc(partitions * sizeof(int));
-
-		for (int i = 0; i < partitions; ++i) {
-			long partition_min = (long) buf
-					+ (request->partition_length * type_extned) * i;
-			long partition_max = partition_min
-					+ request->partition_length * type_extned;
-
-			long min_loop_iter = (partition_min - B_min) / A_min;
-			long max_loop_iter = (partition_max - B_max) / A_max;
-
-			// not outside loop bounds
-			min_loop_iter = min_loop_iter < loop_min ? loop_min : min_loop_iter;
-			max_loop_iter = max_loop_iter < loop_max ? loop_max : max_loop_iter;
-
-			long min_chunk = (min_loop_iter - loop_min) / chunk_size;
-			long max_chunk = (max_loop_iter - loop_min) / chunk_size;
-			//if partly in next chunk
-			if ((max_loop_iter - loop_min) % chunk_size != 0) {
-				max_chunk++;
-			}
-			// +1 as both numbers are inclusive
-			request->local_overlap_count[i] = max_chunk - min_chunk + 1;
-
-		}
-
-		//DEBUG PRINTING
-		int rank;
-		MPI_Comm_rank(comm, &rank);
-		if (rank == 0) {
-			debug_printing(type_extned, loop_max, loop_min, chunk_size, A_min,
-					B_min, A_max, B_max, request);
-		}
-	}
-
-//TODO which values can be inferred for the r/w mem access on the buffer regarding the loop index
-
 	int partitions = 1;
 
-	MPIX_Psend_init(buf, partitions, count, datatype, dest, tag, comm,
-	MPI_INFO_NULL, request);
+#pragma omp single
+	{
+		assert(A_min > 0 && "Decrementing loops not supported yet");
+		assert(A_max > 0 && "Decrementing loops not supported yet");
+
+		void *chunk_access_start;
+		unsigned long chunk_access_length;
+		long chunk_access_stride;	//  may be negative! == overlapping access
+
+		MPI_Aint type_extned;
+		MPI_Type_extent(datatype, &type_extned);
+
+		long sending_size = type_extned * count;
+
+		long access_size = A_max * (loop_min + chunk_size) + B_max
+				+ -A_min * loop_min + B_min;
+
+		if (access_size >= sending_size) {
+			// no partitioning useful
+
+			MPIX_Psend_init(buf, partitions, count, datatype, dest, tag, comm,
+			MPI_INFO_NULL, request);
+
+		} else {
+
+			// int division: rounding down is implicit
+			unsigned requested_partition_size_byte = sending_size / access_size;
+
+			unsigned valid_partition_size_byte =
+					find_valid_partition_size_bytes(count, type_extned,
+							requested_partition_size_byte);
+
+			unsigned valid_partition_size_datamembers =
+					valid_partition_size_byte / type_extned;
+
+			assert(valid_partition_size_byte % type_extned == 0);
+
+			partitions = count / valid_partition_size_datamembers;
+			assert(count % valid_partition_size_datamembers == 0);
+			assert(
+					partitions * valid_partition_size_datamembers * type_extned
+							== sending_size);
+
+			assert(valid_partition_size_byte % sending_size == 0);
+			assert(valid_partition_size_byte % type_extned == 0);
+			assert(valid_partition_size_datamembers * partitions == count);
+
+			/*
+			 int partition_size_datamembers = 0;
+			 int partitions = 1;
+
+			 if (partition_size_byte > type_extned) {
+			 // larger: how many datamembers do we need per partition?
+			 partitions = partition_size_byte / type_extned;
+			 if (partition_size_byte % type_extned != 0) {
+			 // we need full datamembers
+			 partitions++;
+			 }
+
+			 } else if (partition_size_byte < type_extned) {
+			 // smaller: each partition has 1 datamember
+			 partitions = count;
+			 partition_size_datamembers = 1;
+
+			 } else {
+			 // equals: each partition has 1 datamember
+			 partitions = count;
+			 partition_size_datamembers = 1;
+			 }
+			 */
+
+			printf("Partitioned send operations into %d Partitions\n",
+					partitions);
+			MPIX_Psend_init(buf, partitions, valid_partition_size_datamembers,
+					datatype, dest, tag, comm,
+					MPI_INFO_NULL, request);
+
+			// calculate local overlap
+			//TODO is there a better way than calculating it for each partition?
+			// one can parallelize it at least?
+
+			request->local_overlap = calloc(partitions, sizeof(int));
+			request->local_overlap_count = malloc(partitions * sizeof(int));
+
+			for (int i = 0; i < partitions; ++i) {
+				long partition_min = (long) buf
+						+ (request->partition_length * type_extned) * i;
+				long partition_max = partition_min
+						+ request->partition_length * type_extned;
+
+				long min_loop_iter = (partition_min - B_min) / A_min;
+				long max_loop_iter = (partition_max - B_max) / A_max;
+
+				// not outside loop bounds
+				min_loop_iter =
+						min_loop_iter < loop_min ? loop_min : min_loop_iter;
+				max_loop_iter =
+						max_loop_iter < loop_max ? loop_max : max_loop_iter;
+
+				long min_chunk = (min_loop_iter - loop_min) / chunk_size;
+				long max_chunk = (max_loop_iter - loop_min) / chunk_size;
+				//if partly in next chunk
+				if ((max_loop_iter - loop_min) % chunk_size != 0) {
+					max_chunk++;
+				}
+				// +1 as both numbers are inclusive
+				request->local_overlap_count[i] = max_chunk - min_chunk + 1;
+
+			}
+
+			//DEBUG PRINTING
+			int rank;
+			MPI_Comm_rank(comm, &rank);
+			if (rank == 0) {
+				debug_printing(type_extned, loop_max, loop_min, chunk_size,
+						A_min, B_min, A_max, B_max, request);
+			}
+		}
+
+//TODO which values can be inferred for the r/w mem access on the buffer regarding the loop index
+	}
 
 	return partitions;
 
