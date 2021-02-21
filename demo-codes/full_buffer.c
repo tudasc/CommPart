@@ -33,8 +33,8 @@ int main(int argc, char **argv) {
 	int *buffer = (int*) malloc(sizeof(int) * TOTAL_SIZE);
 	int *buffer_r = (int*) malloc(sizeof(int) * TOTAL_SIZE);
 
-	// fuffer access
-#pragma omp parallel for firstprivate(buffer)
+	// buffer access
+#pragma omp parallel for firstprivate(buffer) schedule(static,1000)
 //#pragma omp parallel for
 	for (int i = 0; i < TOTAL_SIZE; ++i) {
 		buffer[i] = i * rank;
