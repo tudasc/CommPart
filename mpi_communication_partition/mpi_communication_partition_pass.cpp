@@ -105,18 +105,18 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		AU.addRequired<PostDominatorTreeWrapperPass>();
 
 		// various AA implementations
-/*
-		AU.addRequired<ScopedNoAliasAAWrapperPass>();
-		AU.addRequired<TypeBasedAAWrapperPass>();
-		// USING THIS WILL RESULT IN A CRASH there my be a bug
-		AU.addRequired<BasicAAWrapperPass>();
-		AU.addRequired<GlobalsAAWrapperPass>();
-		AU.addRequired<SCEVAAWrapperPass>();
+		/*
+		 AU.addRequired<ScopedNoAliasAAWrapperPass>();
+		 AU.addRequired<TypeBasedAAWrapperPass>();
+		 // USING THIS WILL RESULT IN A CRASH there my be a bug
+		 AU.addRequired<BasicAAWrapperPass>();
+		 AU.addRequired<GlobalsAAWrapperPass>();
+		 AU.addRequired<SCEVAAWrapperPass>();
 
-		// these also result in bug
-		AU.addRequired<CFLAndersAAWrapperPass>();
-		AU.addRequired<CFLSteensAAWrapperPass>();
-*/
+		 // these also result in bug
+		 AU.addRequired<CFLAndersAAWrapperPass>();
+		 AU.addRequired<CFLSteensAAWrapperPass>();
+		 */
 	}
 	/*
 	 void getAnalysisUsage(AnalysisUsage &AU) const {
@@ -131,7 +131,9 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		return "MPI Communication Partition";
 	}
 
-	//TODO is there a better option to do it, it seems that this only reverse engenieer the analysis donb by llvm
+	//TODO I need to imppl a move before the parallel part
+
+	//TODO is there a better option to do it, it seems that this only reverse engenieer the analysis done by llvm
 	// calculates the start value and inserts the calculation into the program
 	Value* get_scev_value(const SCEV *scev, Instruction *insert_before) {
 
@@ -318,6 +320,45 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 	}
 
+	// only call if the replacement is actually safe
+	//TODO refactor to be able to make an assertion
+	bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
+			const SCEV *min_adress, const SCEV *max_adress) {
+
+		//TOOD for a static schedule, there should be a better way of getting the chunk_size!
+
+		auto *LI = analysis_results->getLoopInfo(
+				parallel_region->get_function());
+
+		auto *preheader =
+				parallel_region->get_parallel_for()->init->getParent()->getNextNode();
+		auto *loop = LI->getLoopFor(preheader->getNextNode());
+
+		errs() << "detected possible partitioning for MPI send Operation";
+
+IRBuilder<> builder = IRBuilder<>(parallel_region->get_parallel_for()->init);
+
+//call void @__kmpc_for_static_init_4(%struct.ident_t* nonnull @3, i32 %4, i32 33, i32* nonnull %.omp.is_last, i32* nonnull %.omp.lb, i32* nonnull %.omp.ub, i32* nonnull %.omp.stride, i32 1, i32 1000) #8
+
+//int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
+//int dest, int tag, MPI_Comm comm, MPIX_Request *request,
+// loop info
+// access= pattern ax+b
+//long A_min, long B_min, long A_max, long B_max, long chunk_size,
+//long loop_min, long loop_max)
+
+//TODO: we need the access pattern value outside the microtask!
+// then we just need to build all args, insert the partitioning call
+// the start
+//--> Problem: we need to give the Request argument to the threads!
+// it might be possible by chainging the function signature and add the request ptr as as an arg. Fallback: global variable, the request is the same for all threads anyway
+// the Pready call??
+//and the wait in place of the send
+// dont forget to delete the send
+
+		return true;
+	}
+
 	// return true in modification where done
 	bool handle_modification_location(CallInst *send_call,
 			Instruction *last_modification) {
@@ -366,7 +407,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 			// make shure no called function writes the msg buffer (such calls should be inlined beforehand)
 
-			auto* AA = &getAnalysis<AAResultsWrapperPass>(
+			auto *AA = &getAnalysis<AAResultsWrapperPass>(
 					*parallel_region->get_function()).getAAResults();
 
 			for (auto *call : call_list) {
@@ -376,8 +417,6 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 						"__kmpc_")) {
 
 					//TODO do i need to handle MPi calls seperately?
-
-					call->dump();
 
 					for (auto &a : call->args()) {
 
@@ -392,6 +431,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 									//TODO check if nocapture and readonly in tgt function
 
+									call->dump();
 									errs()
 											<< "Found call with ptr that may alias, analysis is not detailed here\n";
 
@@ -424,67 +464,105 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				//TODO implement analysis of multiple for loops??
 				auto *loop_exit = parallel_region->get_parallel_for()->fini;
 
-
 				AA = analysis_results->getAAResults(
-								parallel_region->get_function());
-				/*
-				bool are_all_stores_before_loop_finish = true;
+						parallel_region->get_function());
 
+				// filter out all stores that can not alias
+				store_list.erase(
+						std::remove_if(store_list.begin(), store_list.end(),
+								[AA, buffer_ptr](llvm::StoreInst *s) {
+									return AA->isNoAlias(buffer_ptr,
+											s->getPointerOperand());
+								}),store_list.end());
 
-				for (auto *s : store_list) {
-					if (!AA->isNoAlias(buffer_ptr, s->getPointerOperand())) {
-						// may alias --> domitate analysis required
-						are_all_stores_before_loop_finish =
-								are_all_stores_before_loop_finish
-										&& PDT->dominates(loop_exit, s);
-					}
+				// check if all remaining are within (or before the loop)
+				bool are_all_stores_before_loop_finish = std::all_of(
+						store_list.begin(), store_list.end(),
+						[PDT, loop_exit](llvm::StoreInst *s) {
 
-				}
-*/
-				bool are_all_stores_before_loop_finish
-				 = std::all_of(
-				 store_list.begin(), store_list.end(),
-				 [AA, PDT, buffer_ptr, loop_exit](llvm::StoreInst *s) {
+							return PDT->dominates(loop_exit, s);
 
-/*
-				 errs() << AA;
-				 errs() << "\n";
-				 errs() << buffer_ptr;
-				 buffer_ptr->print(errs());
-				 //errs() << "\n";
-				 //errs() << s;
-				 errs() << "\n";
-				 errs() << s->getPointerOperand();
-				 s->getPointerOperand()->print(errs());
-				 errs() << "\n";
-				 errs() << "of same function? "
-				 << (buffer_ptr->getParent()
-				 == s->getFunction()) << "\n";
-				 errs() << "Is no alias? "
-				 << (AA->isNoAlias(buffer_ptr,
-				 s->getPointerOperand())) << "\n";
-*/
-				 if (!AA->isNoAlias(buffer_ptr,
-				 s->getPointerOperand())) {
-				 // may alias --> domitate analysis required
-				 return PDT->dominates(loop_exit, s);
-				 }
-				 // can not alias --> dont care wether it is after the loop
-				 return true;
-				 });
+						});
 
-				errs() << "All before loop exit?"
-						<< are_all_stores_before_loop_finish << "\n";
+				//errs() << "All before loop exit?"
+				//		<< are_all_stores_before_loop_finish << "\n";
 				if (!are_all_stores_before_loop_finish) {
 					//cannot determine a partitioning if access is outside the loop
 					handle_modification_location(send_call,
 							parallel_region->get_fork_call());
 					return true;
 				}
-
 				//TODO do we need to consider stores before the loop?
 
-				// now we need to get min and maximum ax+b for every store in the loop
+				// TODO is assertion correct --> was it actually checked before?
+				assert(!store_list.empty());
+
+				// now we need to get min and maximum memory access pattern for every store in the loop
+
+				auto *SE = analysis_results->getSE(
+						parallel_region->get_function());
+
+				const SCEV *min = SE->getSCEV(
+						store_list[0]->getPointerOperand());
+				const SCEV *max = SE->getSCEV(
+						store_list[0]->getPointerOperand());
+
+				// skip first
+				for (auto s = ++store_list.begin(); s != store_list.end();
+						++s) {
+
+					auto *candidate = SE->getSCEV((*s)->getPointerOperand());
+
+					if (SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE,
+							candidate, min)) {
+						min = candidate;
+					} else {
+						if (!SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE,
+								candidate, min))
+							errs()
+									<< "Error analyzing the memory access pattern\n";
+						// we cant do anything
+						return true;
+					}
+					if (SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE, max,
+							candidate)) {
+						min = candidate;
+					} else {
+						if (!SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE,
+								candidate, max))
+							errs()
+									<< "Error analyzing the memory access pattern\n";
+						// we cant do anything
+						return true;
+					}
+
+				}
+
+				auto *LI = analysis_results->getLoopInfo(
+						parallel_region->get_function());
+
+				LI->print(errs());
+				//TODO refactoring!
+				// this shcould be part of microtask?
+				// the for init call is before the loop preheader
+				auto *preheader =
+						parallel_region->get_parallel_for()->init->getParent()->getNextNode();
+
+				auto *loop = LI->getLoopFor(preheader->getNextNode());
+
+				assert(loop != nullptr);
+
+				if (SE->hasComputableLoopEvolution(min, loop)
+						&& SE->hasComputableLoopEvolution(min, loop)) {
+
+					insert_partitioning(parallel_region, send_call, min, max);
+					// done
+					return true;
+				} else {
+					errs() << "Error analyzing the memory access pattern\n";
+					// we cant do anything
+					return true;
+				}
 
 			}
 
@@ -508,7 +586,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		//Debug(M.dump(););
 
-		//M.print(errs(), nullptr);
+		M.print(errs(), nullptr);
 
 		mpi_func = get_used_mpi_functions(M);
 		if (!is_mpi_used(mpi_func)) {

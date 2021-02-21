@@ -73,9 +73,6 @@ llvm::AAResults* RequiredAnalysisResults::getAAResults(llvm::Function *f) {
 		current_AA_function = f;
 		current_AA = &assertion_checker_pass->getAnalysis<AAResultsWrapperPass>(
 				*f).getAAResults();
-
-		errs() << "Get AA for Function" << f->getName() <<"\n";
-
 	}
 
 	return current_AA;
