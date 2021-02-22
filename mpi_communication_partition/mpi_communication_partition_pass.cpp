@@ -597,17 +597,17 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		auto *ftype = parallel_region->get_function()->getFunctionType();
 
-		std::vector<Type*> new_args;
+		std::vector<Type*> new_arg_types;
 
 		for (auto *t : ftype->params()) {
-			new_args.push_back(t);
+			new_arg_types.push_back(t);
 
 		}
 // add the ptr to Request
-		new_args.push_back(mpi_func->mpix_request_type->getPointerTo());
+		new_arg_types.push_back(mpi_func->mpix_request_type->getPointerTo());
 
-		auto *new_ftype = FunctionType::get(ftype->getReturnType(), new_args,
-				ftype->isVarArg());
+		auto *new_ftype = FunctionType::get(ftype->getReturnType(),
+				new_arg_types, ftype->isVarArg());
 
 //TODO do we need to invalidate the Microtask object? AT THE END OF FUNCTION when all analysis is done
 		auto new_name = parallel_region->get_function()->getName() + "_p";
@@ -784,8 +784,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				parallel_region);
 
 		std::vector<Value*> argument_list_with_wrong_types { buf, count,
-				datatype, dest, tag, comm, request_ptr, A_min, B_min, A_max, B_max,
-				chunk_size, loop_min, loop_max };
+				datatype, dest, tag, comm, request_ptr, A_min, B_min, A_max,
+				B_max, chunk_size, loop_min, loop_max };
 
 // add a sign extension for all args if needed
 		std::vector<Value*> argument_list;
@@ -813,14 +813,78 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		builder.CreateCall(mpi_func->partition_sending_op, argument_list,
 				"partitions");
 
-//TODO: we need the access pattern value outside the microtask!
-// then we just need to build all args, insert the partitioning call
-// the start
-//--> Problem: we need to give the Request argument to the threads!
-// it might be possible by chainging the function signature and add the request ptr as as an arg. Fallback: global variable, the request is the same for all threads anyway
-// the Pready call??
-//and the wait in place of the send
-// dont forget to delete the send
+		// start the communication
+		builder.CreateCall(mpi_func->mpix_Start, { request_ptr });
+
+		// fork_call
+		//call void (%struct.ident_t*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%struct.ident_t* nonnull @2, i32 2, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, i32*, i32*)* @.omp_outlined. to void (i32*, i32*, ...)*), i8* %call3, i32* nonnull %rank)
+		// change the call to the new ompoutlined
+
+		auto *original_fork_call = parallel_region->get_fork_call();
+		auto original_arg_it = original_fork_call->arg_begin();
+
+		Value *loc = *original_arg_it;
+		// no need to change it
+		original_arg_it = std::next(original_arg_it);// ++arg_it but std::next is the portable version for all iterators
+
+		Value *original_argc = *original_arg_it;
+		// we need to increment it as we add the MPI Request
+		assert(isa<ConstantInt>(original_argc));
+		auto *original_argc_constant = cast<ConstantInt>(original_argc);
+		long outlined_arg_count = original_argc_constant->getSExtValue();
+		Value *new_argc = ConstantInt::get(original_argc_constant->getType(),
+				outlined_arg_count + 1);
+		original_arg_it = std::next(original_arg_it);
+
+		// the microtask
+		Value *original_microtask = *original_arg_it;
+		Value *new_microtask_arg = builder.CreateBitOrPointerCast(
+				new_parallel_function, original_microtask->getType());
+
+		original_arg_it = std::next(original_arg_it);
+
+		std::vector<Value*> new_args { loc, new_argc, new_microtask_arg };
+		new_args.reserve(3 + outlined_arg_count + 1);
+		// all the original arguments
+		std::copy(original_arg_it, original_fork_call->arg_end(),
+				std::back_inserter(new_args));
+		// and the MPI request
+		new_args.push_back(request_ptr);
+
+		errs() << "insert new fork call\n";
+		auto *new_call = builder.CreateCall(
+				original_fork_call->getCalledFunction(), new_args);
+
+		Function *old_ompoutlined = original_fork_call->getCalledFunction();
+		// remove old call
+		original_fork_call->replaceAllUsesWith(new_call);// unnecessary as it is c void return anyway
+		original_fork_call->eraseFromParent();
+		// remove old function if no longer needed
+		if (old_ompoutlined->user_empty()) {
+			old_ompoutlined->eraseFromParent();
+			errs() << "Removed the old ompoutlined\n";
+		} else {
+			//TODO why is ther a user left?
+			for (auto *u : old_ompoutlined->users())
+				u->dump();
+		}
+
+		// now we need to replace the send call with the wait
+		builder.SetInsertPoint(send_call);
+
+		//TODO set status ignore instead?
+
+		Type *MPI_status_ptr_type =
+				mpi_func->mpix_Wait->getFunctionType()->getParamType(1);
+
+		Value *status_ptr = builder.CreateAlloca(
+				MPI_status_ptr_type->getPointerElementType(), 0, "mpi_status");
+
+		Value *new_send_call = builder.CreateCall(mpi_func->mpix_Wait, {
+				request_ptr, status_ptr });
+		// and finally remove the old send call
+		send_call->replaceAllUsesWith(new_send_call);
+		send_call->eraseFromParent();
 
 		return true;
 	}
@@ -1105,10 +1169,10 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				}
 				auto *buffer_ptr = send_call->getArgOperand(0);
 
+				// gather all uses of this buffer
+				std::vector<Instruction*> to_analyze;
 				for (auto *u : buffer_ptr->users()) {
 					if (u != send_call) {
-
-						std::vector<Instruction*> to_analyze;
 
 						if (auto *inst = dyn_cast<Instruction>(u)) {
 
@@ -1118,141 +1182,129 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 								to_analyze.push_back(inst);
 							}
 						}
+					}
+				}
 
-						//TODO need to refactor this!
-						Instruction *to_handle = get_last_instruction(
-								to_analyze);
-						bool handled = false;				// flag to abort
-						while (!handled && to_handle != nullptr) {
+				//TODO need to refactor this!
+				Instruction *to_handle = get_last_instruction(to_analyze);
+				bool handled = false;				// flag to abort
+				while (!handled && to_handle != nullptr) {
 
-							to_handle->print(errs());
-							errs() << "\n";
-							if (auto *store = dyn_cast<StoreInst>(to_handle)) {
-								if (buffer_ptr == store->getValueOperand()) {
-									// add all uses of the Pointer operand "taint" this pointer and treat it as the msg buffer itself
-									// this will lead to false positives
-									//but there are not much meaningful uses of this anyway
+					to_handle->print(errs());
+					errs() << "\n";
+					if (auto *store = dyn_cast<StoreInst>(to_handle)) {
+						if (buffer_ptr == store->getValueOperand()) {
+							// add all uses of the Pointer operand "taint" this pointer and treat it as the msg buffer itself
+							// this will lead to false positives
+							//but there are not much meaningful uses of this anyway
 
-									for (auto *u : store->getPointerOperand()->users()) {
-										if (u != store) {
-											if (auto *i = dyn_cast<Instruction>(
-													u)) {
-												to_analyze.push_back(i);
-											}
-										}
-									}
-								} else {
-									assert(
-											buffer_ptr
-													== store->getPointerOperand());
-									modification = modification
-											| handle_modification_location(
-													send_call, to_handle);
-									handled = true;
-									continue;
-								}
-
-							} else if (auto *call = dyn_cast<CallInst>(
-									to_handle)) {
-
-								assert(
-										call->hasArgument(buffer_ptr)
-												&& "You arer calling an MPI sendbuffer?\n I refuse to analyze this dak pointer magic!\n");
-
-								unsigned operand_position = 0;
-								while (call->getArgOperand(operand_position)
-										!= buffer_ptr) {
-									++operand_position;
-								}// will terminate, as assert above secured that
-
-								if (operand_position
-										>= call->getCalledFunction()->getFunctionType()->getNumParams()) {
-									assert(
-											call->getCalledFunction()->getFunctionType()->isVarArg());
-									operand_position =
-											call->getCalledFunction()->getFunctionType()->getNumParams()
-													- 1;
-									// it is one of the VarArgs
-								}
-
-								auto *ptr_argument =
-										call->getCalledFunction()->getArg(
-												operand_position);
-
-								if (call->getCalledFunction()->getName().equals(
-										"__kmpc_fork_call")) {
-									// TODO analyze this fork call
-
-									Microtask *parallel_region = new Microtask(
-											call);
-
-									handled = handle_fork_call(parallel_region,
-											send_call);
-
-								} else {
-									if (ptr_argument->hasNoCaptureAttr()) {
-										if (call->getCalledFunction()->onlyReadsMemory()) {
-											//readonly is ok --> nothing to do
-										} else {
-											unsigned operand_position = 0;
-											while (call->getArgOperand(
-													operand_position)
-													!= buffer_ptr) {
-												operand_position++;
-											}
-
-											if (ptr_argument->hasAttribute(
-													Attribute::ReadOnly)) {
-												//readonly is ok --> nothing to do
-											} else {
-												// function may write
-												modification =
-														modification
-																| handle_modification_location(
-																		send_call,
-																		call);
-											}
-										}
-									} else {
-										// no nocapture: function captures the pointer ==> others may access it
-										// we cannot do any further analysis
-										errs() << "Function "
-												<< call->getCalledFunction()->getName()
-												<< " captures the send buffer pointer\n No further analysis possible\n";
-										handled = true;	// fonnd that we cannot do anything
-										continue;
+							for (auto *u : store->getPointerOperand()->users()) {
+								if (u != store) {
+									if (auto *i = dyn_cast<Instruction>(u)) {
+										to_analyze.push_back(i);
 									}
 								}
-
-							} else {
-								errs()
-										<< "Support for the analysis of this instruction is not implemented yet\n";
-								to_handle->print(errs());
-								errs() << "\n";
 							}
-
-							// handle other instructions such as
-							// GEP
-							// cast
-
-							// remove erase the analyzed instruction
-							to_analyze.erase(
-									std::remove(to_analyze.begin(),
-											to_analyze.end(), to_handle),
-									to_analyze.end());
-							if (to_analyze.size() > 0) {
-								to_handle = get_last_instruction(to_analyze);
-							} else {
-								to_handle = nullptr;
-								// nothing more to do
-								// no modification detected so far
-							}
-
+						} else {
+							assert(buffer_ptr == store->getPointerOperand());
+							modification = modification
+									| handle_modification_location(send_call,
+											to_handle);
+							handled = true;
+							continue;
 						}
+
+					} else if (auto *call = dyn_cast<CallInst>(to_handle)) {
+
+						assert(
+								call->hasArgument(buffer_ptr)
+										&& "You arer calling an MPI sendbuffer?\n I refuse to analyze this dak pointer magic!\n");
+
+						unsigned operand_position = 0;
+						while (call->getArgOperand(operand_position)
+								!= buffer_ptr) {
+							++operand_position;
+						}		// will terminate, as assert above secured that
+
+						if (operand_position
+								>= call->getCalledFunction()->getFunctionType()->getNumParams()) {
+							assert(
+									call->getCalledFunction()->getFunctionType()->isVarArg());
+							operand_position =
+									call->getCalledFunction()->getFunctionType()->getNumParams()
+											- 1;
+							// it is one of the VarArgs
+						}
+
+						auto *ptr_argument = call->getCalledFunction()->getArg(
+								operand_position);
+
+						if (call->getCalledFunction()->getName().equals(
+								"__kmpc_fork_call")) {
+
+							Microtask *parallel_region = new Microtask(call);
+
+							handled = handle_fork_call(parallel_region,
+									send_call);
+
+						} else {
+							if (ptr_argument->hasNoCaptureAttr()) {
+								if (call->getCalledFunction()->onlyReadsMemory()) {
+									//readonly is ok --> nothing to do
+								} else {
+									unsigned operand_position = 0;
+									while (call->getArgOperand(operand_position)
+											!= buffer_ptr) {
+										operand_position++;
+									}
+
+									if (ptr_argument->hasAttribute(
+											Attribute::ReadOnly)) {
+										//readonly is ok --> nothing to do
+									} else {
+										// function may write
+										modification = modification
+												| handle_modification_location(
+														send_call, call);
+									}
+								}
+							} else {
+								// no nocapture: function captures the pointer ==> others may access it
+								// we cannot do any further analysis
+								errs() << "Function "
+										<< call->getCalledFunction()->getName()
+										<< " captures the send buffer pointer\n No further analysis possible\n";
+								handled = true;	// fonnd that we cannot do anything
+								continue;
+							}
+						}
+
+					} else {
+						errs()
+								<< "Support for the analysis of this instruction is not implemented yet\n";
+						to_handle->print(errs());
+						errs() << "\n";
+					}
+
+					//TODO handle other instructions such as
+					// GEP
+					// cast
+
+					// remove erase the analyzed instruction
+					to_analyze.erase(
+							std::remove(to_analyze.begin(), to_analyze.end(),
+									to_handle), to_analyze.end());
+					if (to_analyze.size() > 0) {
+						to_handle = get_last_instruction(to_analyze);
+					} else {
+						to_handle = nullptr;
+						// nothing more to do
+						// no modification detected so far
 					}
 
 				}
 			}
+
 		}
 // find usage of sending buffer
 // if usage == openmp fork call
@@ -1265,10 +1317,9 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		if (!module_errors) {
 			errs() << "Successfully executed the pass\n\n";
 
-		}else{
+		} else {
 			errs() << "Module Verification ERROR\n";
 		}
-
 
 		delete mpi_func;
 		delete mpi_implementation_specifics;
