@@ -314,8 +314,10 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 	int partitions = 1;
 
-#pragma omp single
-	{
+	printf("Try to partition this sending operation\n");
+
+//#pragma omp single
+	//{
 		assert(A_min > 0 && "Decrementing loops not supported yet");
 		assert(A_max > 0 && "Decrementing loops not supported yet");
 
@@ -440,7 +442,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		}
 
 //TODO which values can be inferred for the r/w mem access on the buffer regarding the loop index
-	}
+	//}// end of pragma omp single
 
 	return partitions;
 
