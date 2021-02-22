@@ -18,6 +18,13 @@ typedef struct {
   // to be used when there is a local overlap
   int* local_overlap;
   int* local_overlap_count;
+  // information for the partitioning
+  long A_min;
+  long B_min;
+  long A_max;
+  long B_max;
+  MPI_Datatype datatype;
+
 } MPIX_Request;
 
 int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,

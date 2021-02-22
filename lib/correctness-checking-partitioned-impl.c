@@ -132,17 +132,16 @@ int MPIX_Request_free(MPIX_Request *request) {
 }
 
 // current iter is the last index of current loop iteration+1 (upper bound)
-int signoff_partitions_after_loop_iter(long current_iter, MPIX_Request *request,
-		MPI_Datatype datatype,
+int signoff_partitions_after_loop_iter(MPIX_Request *request,
 		// loop info
 		// access= pattern ax+b
-		long A, long B, long local_min, long local_max) {
+	 long min_iter, long max_iter) {
 
-	long min_adress = A * local_min + B;
-	long max_adress = A * local_max + B;
+	long min_adress = request->A_min * min_iter + request->B_min;
+	long max_adress = request->A_max * max_iter + request->B_max;
 
 	MPI_Aint type_extned;
-	MPI_Type_extent(datatype, &type_extned);
+	MPI_Type_extent(request->datatype, &type_extned);
 
 	//minimum_partition to sign off
 	int min_part_num = (min_adress - (long) request->buf_start)
@@ -319,6 +318,12 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 	{
 		assert(A_min > 0 && "Decrementing loops not supported yet");
 		assert(A_max > 0 && "Decrementing loops not supported yet");
+
+		request->A_max=A_max;
+		request->B_max=B_max;
+		request->B_max=A_min;
+		request->B_min=B_min;
+		request->datatype= datatype;
 
 		void *chunk_access_start;
 		unsigned long chunk_access_length;
