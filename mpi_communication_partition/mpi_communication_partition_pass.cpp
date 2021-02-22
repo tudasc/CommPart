@@ -189,63 +189,23 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		if (auto *ptr_arg = dyn_cast<AllocaInst>(in_parallel)) {
 			// e.g. the values set by the for_init call
 
-			Value *stored_value = nullptr;
-			for (auto user : ptr_arg->users()) {
-				if (auto *cast = dyn_cast<CastInst>(user)) {
-					// e.g. ptr cast to pass it to llvm lifetime builtins
+			// as we want the value outside of the omp parallel we just need to get the first value stored
+			// if value isnt stored within the first BasicBlock there is no defined value
 
-					//TODO do we need to follow the casts usage to check it is only given to the llvm internals
-				} else if (auto *call = dyn_cast<CallInst>(user)) {
-					// call to for_init
-					if (call == parallel_region->get_parallel_for()->init) {
-						// arg 4,5,6 are allowed
-						assert(
-								(call->getArgOperand(4) == ptr_arg
-										|| call->getArgOperand(5) == ptr_arg
-										|| call->getArgOperand(6) == ptr_arg)
-										&& "This makes no sense. basing the loop acces on other args than the loop iteration count is not valid");
-						// do not abort the loop, this is legit
-					} else {
-						errs() << "Currently not supported:\n";
-						ptr_arg->dump();
-						call->dump();
-						stored_value = nullptr;
-						break;
+			Instruction *next_inst = ptr_arg->getNextNode();
+
+			while (next_inst != nullptr) {
+				if (auto *s = dyn_cast<StoreInst>(next_inst)) {
+					if (s->getPointerOperand() == ptr_arg) {
+						// found matching store
+						return get_value_in_serial_part(s->getValueOperand(),
+								parallel_region);
 					}
-
-				} else if (auto *store = dyn_cast<StoreInst>(user)) {
-
-					if (!store->getParent()->getName().startswith(
-							"omp.dispatch.")) {
-
-						//TODO need to actually analyze the dispatch patrt of the loop
-						// maybne we need to enter the signoff partition call in the dispatch block?
-
-						if (stored_value == nullptr) {
-							stored_value = store->getValueOperand();
-
-						} else {
-
-							errs() << "Conflicting store operations:\n";
-							store->dump();
-							stored_value->dump();
-							stored_value = nullptr;
-							break;
-						}
-
-					}
-				} else if (isa<LoadInst>(user)) {
-					// the load inst where this alloc resulted
-					// loading is OK, nothing to take care of
-				} else {
-					errs() << "Currently not supported:\n";
-					user->dump();
-					stored_value = nullptr;
-					break;
 				}
+				next_inst = next_inst->getNextNode();
 			}
+			//TODO is there any other way a variable is set besides store?
 
-			return get_value_in_serial_part(stored_value, parallel_region);
 		}
 
 		errs() << "Error finding the vlaue in main:\n";
@@ -253,13 +213,14 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		return nullptr;
 	}
 
-	// SCEV do not distinguish between ptr and i64 therefore we might need to add casts
-	// we always cast to i64 as we need this for arithmetic
+// SCEV do not distinguish between ptr and i64 therefore we might need to add casts
+// we always cast to i64 as we need this for arithmetic
 
 	Value* getAsInt(Value *v, Instruction *insert_before) {
 		return getCastedToCorrectType(v,
 				IntegerType::getInt64Ty(v->getContext()), insert_before);
 	}
+
 	Value* getCastedToCorrectType(Value *v, Type *t,
 			Instruction *insert_before) {
 		if (v->getType() == t) {
@@ -277,8 +238,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 					return builder.CreatePtrToInt(v, t);
 				} else {
 					assert(false && "Should not reach this");
+					return nullptr;
 				}
-
 			}
 		}
 	}
@@ -287,24 +248,24 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 	Value* get_scev_value_before_parallel_function(const SCEV *scev,
 			Instruction *insert_before, Microtask *parallel_region) {
 
-		scev->print(errs());
-		errs() << "\n";
+		//scev->print(errs());
+		//errs() << "\n";
 
 		if (auto *c = dyn_cast<SCEVUnknown>(scev)) {
-			c->getValue()->print(errs());
-			errs() << "\n";
+			//c->getValue()->print(errs());
+			//errs() << "\n";
 
 			return get_value_in_serial_part(c->getValue(), parallel_region);
 		}
 		if (auto *c = dyn_cast<SCEVConstant>(scev)) {
-			c->getValue()->print(errs());
-			errs() << "\n";
+			//c->getValue()->print(errs());
+			//errs() << "\n";
 			return get_value_in_serial_part(c->getValue(), parallel_region);
 		}
 
 		if (auto *c = dyn_cast<SCEVCastExpr>(scev)) {
 			IRBuilder<> builder(insert_before);
-			errs() << " cast expr\n";
+			//errs() << " cast expr\n";
 			auto *operand = c->getOperand();
 
 			if (isa<SCEVSignExtendExpr>(c)) {
@@ -325,11 +286,10 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		}
 		if (auto *c = dyn_cast<SCEVCommutativeExpr>(scev)) {
 			IRBuilder<> builder(insert_before);
-			errs() << " commutative expr\n";
+			//errs() << " commutative expr\n";
 			if (isa<SCEVAddExpr>(c)) {
-				errs() << " add expr\n";
-
-				c->dump();
+				//errs() << " add expr\n";
+				//c->dump();
 
 				int operand = 1;
 				Value *Left_side = getAsInt(
@@ -349,12 +309,12 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 				auto *result = Left_side;
 
-				result->print(errs());
-				errs() << "\n";
+				//result->print(errs());
+				//errs() << "\n";
 				return result;
 			}
 			if (isa<SCEVMulExpr>(c)) {
-				errs() << "mul expr\n";
+				//errs() << "mul expr\n";
 				assert(c->getNumOperands() > 1);
 
 				int operand = 1;
@@ -537,7 +497,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		}
 
-		// not computable
+// not computable
 		return std::make_pair(nullptr, nullptr);
 	}
 
@@ -556,7 +516,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		auto *Pdomtree = analysis_results->getPostDomTree(
 				current_instruction->getFunction());
 
-		// first entry is current candidate
+// first entry is current candidate
 		for (auto it = inst_list.begin() + 1; it < inst_list.end(); ++it) {
 			if (Pdomtree->dominates(*it, current_instruction)) {
 				current_instruction = *it;
@@ -586,7 +546,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 	}
 
-	//combine std::find_if and std::none_of to write stl-like find_if_exactly_one
+//combine std::find_if and std::none_of to write stl-like find_if_exactly_one
 	template<class InputIt, class UnaryPredicate>
 	InputIt find_if_exactly_one(InputIt first, InputIt last, UnaryPredicate p) {
 		auto it = std::find_if(first, last, p);
@@ -622,7 +582,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		assert(min_adress->isAffine() && max_adress->isAffine());
 
-		//TOOD for a static schedule, there should be a better way of getting the chunk_size!
+//TOOD for a static schedule, there should be a better way of getting the chunk_size!
 
 		auto *LI = analysis_results->getLoopInfo(
 				parallel_region->get_function());
@@ -649,17 +609,17 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		auto *new_ftype = FunctionType::get(ftype->getReturnType(), new_args,
 				ftype->isVarArg());
 
-		//TODO do we need to invalidate the Microtask object? AT THE END OF FUNCTION when all analysis is done
+//TODO do we need to invalidate the Microtask object? AT THE END OF FUNCTION when all analysis is done
 		auto new_name = parallel_region->get_function()->getName() + "_p";
 
 		Function *new_parallel_function = Function::Create(new_ftype,
 				parallel_region->get_function()->getLinkage(), new_name,
 				parallel_region->get_function()->getParent());
 
-		// contains a mapping form all original values to the clone
+// contains a mapping form all original values to the clone
 		ValueToValueMapTy VMap;
 
-		// build mapping for all the original arguments
+// build mapping for all the original arguments
 		for (auto arg_orig_iter = parallel_region->get_function()->arg_begin(),
 				arg_new_iter = new_parallel_function->arg_begin();
 				arg_orig_iter != parallel_region->get_function()->arg_end();
@@ -670,27 +630,27 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 			VMap.insert(kv);
 		}
 
-		//only one return in ompoutlined
+//only one return in ompoutlined
 		SmallVector<ReturnInst*, 1> returns;
 
-		// if migrating to newer LLvm false need to become llvm::CloneFunctionChangeType::LocalChangesOnly
+// if migrating to newer LLvm false need to become llvm::CloneFunctionChangeType::LocalChangesOnly
 		llvm::CloneFunctionInto(new_parallel_function,
 				parallel_region->get_function(), VMap, false, returns);
-		//, NameSuffix, CodeInfo, TypeMapper, Materializer)
+//, NameSuffix, CodeInfo, TypeMapper, Materializer)
 
-		// need to add a call to signoff_partitions after a loop iteration has finished
+// need to add a call to signoff_partitions after a loop iteration has finished
 		Instruction *original_finish = parallel_region->get_parallel_for()->fini;
 		Instruction *new_finish = cast<Instruction>(VMap[original_finish]);
 
-		// all of this analysis happens in old version of the function!
+// all of this analysis happens in old version of the function!
 		auto *loop_end_block = find_end_block(parallel_region);
-		// this block must contain a store to lower bound and upper bound
-		// ptr comes from init_function
+// this block must contain a store to lower bound and upper bound
+// ptr comes from init_function
 		CallInst *init_call = parallel_region->get_parallel_for()->init;
 		auto *ptr_omp_lb = init_call->getArgOperand(4);
 		auto *ptr_omp_ub = init_call->getArgOperand(5);
 
-		// these need to be instructions in the omp.dispatch.inc block
+// these need to be instructions in the omp.dispatch.inc block
 		Instruction *omp_lb = nullptr;
 		Instruction *omp_ub = nullptr;
 
@@ -713,30 +673,30 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		assert(omp_lb != nullptr && omp_ub != nullptr);
 		assert(omp_lb->getParent() == omp_ub->getParent());
-		assert(loop_end_block->getPrevNode() == omp_lb->getParent() );
+		assert(loop_end_block->getPrevNode() == omp_lb->getParent());
 
-		// now transition to the copy of parallel func including the request parameter:
+// now transition to the copy of parallel func including the request parameter:
 		omp_lb = cast<Instruction>(VMap[omp_lb]);
 		omp_ub = cast<Instruction>(VMap[omp_ub]);
 
-		// assertions must still hold
+// assertions must still hold
 		assert(omp_lb != nullptr && omp_ub != nullptr);
 		assert(omp_lb->getParent() == omp_ub->getParent());
 
-		//assert(loop_end_block->getPrevNode() == omp_lb->getParent());
-		// if we want to test this assertion again, we need to first get the loop_end_block in the copy
+//assert(loop_end_block->getPrevNode() == omp_lb->getParent());
+// if we want to test this assertion we need to first get the loop_end_block in the copy
 
-		// insert before final instruction of this block
+// insert before final instruction of this block
 		Instruction *insert_point_in_copy =
 				omp_lb->getParent()->getTerminator();
 		IRBuilder<> builder_in_copy(insert_point_in_copy);
-		//TODO is there a different insert point for dynamic scheduled loops?
+//TODO is there a different insert point for dynamic scheduled loops?
 
-		// it is the last argument
+// it is the last argument
 		Value *request = new_parallel_function->getArg(
 				new_parallel_function->getFunctionType()->getNumParams() - 1);
 
-		// maybe we need a sign_extend form i32 to i64
+// maybe we need a sign_extend form i32 to i64
 
 		Type *loop_bound_type =
 				mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->getParamType(
@@ -759,8 +719,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		builder_in_copy.CreateCall(mpi_func->signoff_partitions_after_loop_iter,
 				{ request, omp_lb, omp_ub });
 
-		// DONE with modifying the parallel region
-		// the fork_call will be modified later
+// DONE with modifying the parallel region
+// the fork_call will be modified later
 
 //		mpi_func->signoff_partitions_after_loop_iter;
 
@@ -772,12 +732,12 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 // access= pattern ax+b
 //long A_min, long B_min, long A_max, long B_max, long chunk_size,
 //long loop_min, long loop_max)
-		// collect all arguments for the partitioned call
+// collect all arguments for the partitioned call
 
 		auto *insert_point = parallel_region->get_fork_call();
 		IRBuilder<> builder(insert_point);
 
-		// args form original send
+// args form original send
 		Value *buf = send_call->getArgOperand(0);
 		Value *count = send_call->getArgOperand(1);
 		Value *datatype = send_call->getArgOperand(2);
@@ -785,24 +745,20 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		Value *tag = send_call->getArgOperand(4);
 		Value *comm = send_call->getArgOperand(5);
 
-		//TODO do we need to check if all of those values are accessible from this function?
+//TODO do we need to check if all of those values are accessible from this function?
 
-		// MPI_Request
+// MPI_Request
 		Value *request_ptr = builder.CreateAlloca(mpi_func->mpix_request_type,
 				nullptr, "mpix_request");
 
 		auto *SE = analysis_results->getSE(parallel_region->get_function());
+		//TODO insert it at top of function
 
-		//TODO will be defined in newer llvm version:
-		//SE->getBackedgeTakenCount(loop,ScalarEvolution::ExitCountKind::SymbolicMaximum )->dump();
-
-		min_adress->print(errs());
-		// arguments for partitioning
+// arguments for partitioning
 		Value *A_min = get_scev_value_before_parallel_function(
 				min_adress->getStepRecurrence(*SE), insert_point,
 				parallel_region);
-		// x is iteration count
-		//B
+
 		Value *B_min = get_scev_value_before_parallel_function(
 				min_adress->getStart(), insert_point, parallel_region);
 
@@ -812,37 +768,50 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		Value *B_max = get_scev_value_before_parallel_function(
 				max_adress->getStart(), insert_point, parallel_region);
 
-		// 8th parameter of for init
+// 8th parameter of static_for_init
 		Value *chunk_size = get_value_in_serial_part(
 				parallel_region->get_parallel_for()->init->getArgOperand(8),
 				parallel_region);
 
-		// 4th parameter of for init
+// 4th parameter of static_for_init
 		Value *loop_min = get_value_in_serial_part(
 				parallel_region->get_parallel_for()->init->getArgOperand(4),
 				parallel_region);
-		// 5th parameter of for init
+
+// 5th parameter of static_for_init
 		Value *loop_max = get_value_in_serial_part(
 				parallel_region->get_parallel_for()->init->getArgOperand(5),
 				parallel_region);
 
 		std::vector<Value*> argument_list_with_wrong_types { buf, count,
-				datatype, dest, tag, comm, request, A_min, B_min, A_max, B_max,
+				datatype, dest, tag, comm, request_ptr, A_min, B_min, A_max, B_max,
 				chunk_size, loop_min, loop_max };
 
-		// add a sign extension for all args if needed
+// add a sign extension for all args if needed
 		std::vector<Value*> argument_list;
+		argument_list.reserve(argument_list_with_wrong_types.size());
+
 		std::transform(argument_list_with_wrong_types.begin(),
 				argument_list_with_wrong_types.end(),
 				mpi_func->partition_sending_op->getFunctionType()->param_begin(),
 				std::back_inserter(argument_list),
-				[&builder](Value *v, Type *desired_t) {
+				[insert_point](Value *v, Type *desired_t) {
 					if (v->getType() == desired_t) {
 						return v;
 					} else {
-						builder.CreateSExt(v, desired_t);
+						// i think passing the builder itself into this lambda might not be a good style
+						// so i capture the insertion point instead
+						// as it is a insert before semantic
+						IRBuilder<> builder(insert_point);
+						return builder.CreateSExt(v, desired_t);
 					}
 				});
+
+		//errs() << "Collected all Values: insert partitioning call\n";
+		builder.SetInsertPoint(insert_point);
+
+		builder.CreateCall(mpi_func->partition_sending_op, argument_list,
+				"partitions");
 
 //TODO: we need the access pattern value outside the microtask!
 // then we just need to build all args, insert the partitioning call
@@ -1091,7 +1060,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 // Pass starts here
 	virtual bool runOnModule(Module &M) {
 
-		//Debug(M.dump(););
+//Debug(M.dump(););
 
 		M.print(errs(), nullptr);
 
@@ -1106,17 +1075,17 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		analysis_results = new RequiredAnalysisResults(this, &M);
 
-		//function_metadata = new FunctionMetadata(analysis_results->getTLI(), M);
+//function_metadata = new FunctionMetadata(analysis_results->getTLI(), M);
 
 		mpi_implementation_specifics = new ImplementationSpecifics(M);
 
-		// debugging
+// debugging
 
 		Function *F = M.getFunction(".omp_outlined.");
 
 		Function *dbg_func = M.getFunction("debug_function");
 
-		// find MPI Send calls
+// find MPI Send calls
 		for (auto *senders : mpi_func->mpi_send->users()) {
 
 			if (auto *send_call = dyn_cast<CallInst>(senders)) {
@@ -1285,24 +1254,27 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				}
 			}
 		}
-		// find usage of sending buffer
-		// if usage == openmp fork call
-		// analyze the parallel region to find if partitioning is possible
+// find usage of sending buffer
+// if usage == openmp fork call
+// analyze the parallel region to find if partitioning is possible
 
-		//M.dump();
+		M.dump();
 		bool broken_dbg_info;
 		bool module_errors = verifyModule(M, &errs(), &broken_dbg_info);
 
 		if (!module_errors) {
-			errs() << "Module Verification OK\n";
+			errs() << "Successfully executed the pass\n\n";
+
+		}else{
+			errs() << "Module Verification ERROR\n";
 		}
 
-		errs() << "Successfully executed the pass\n\n";
+
 		delete mpi_func;
 		delete mpi_implementation_specifics;
 		delete analysis_results;
 
-		//delete function_metadata;
+//delete function_metadata;
 
 		return modification;
 
