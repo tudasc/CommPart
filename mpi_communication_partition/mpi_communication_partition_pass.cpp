@@ -710,23 +710,27 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				}
 			}
 		}
+
 		assert(omp_lb != nullptr && omp_ub != nullptr);
-		assert(omp_lb->getParent()==omp_ub->getParent());
-		assert(loop_end_block->getPrevNode()==omp_lb->getParent());
+		assert(omp_lb->getParent() == omp_ub->getParent());
+		assert(loop_end_block->getPrevNode() == omp_lb->getParent() );
 
 		// now transition to the copy of parallel func including the request parameter:
-		omp_lb= cast<Instruction>(VMap[omp_lb]);
-		omp_ub= cast<Instruction>(VMap[omp_ub]);
+		omp_lb = cast<Instruction>(VMap[omp_lb]);
+		omp_ub = cast<Instruction>(VMap[omp_ub]);
 
 		// assertions must still hold
 		assert(omp_lb != nullptr && omp_ub != nullptr);
-		assert(omp_lb->getParent()==omp_ub->getParent());
-		assert(loop_end_block->getPrevNode()==omp_lb->getParent());
+		assert(omp_lb->getParent() == omp_ub->getParent());
+
+		//assert(loop_end_block->getPrevNode() == omp_lb->getParent());
+		// if we want to test this assertion again, we need to first get the loop_end_block in the copy
 
 		// insert before final instruction of this block
-		Instruction* insert_point_in_copy = omp_lb->getParent()->getTerminator();
+		Instruction *insert_point_in_copy =
+				omp_lb->getParent()->getTerminator();
 		IRBuilder<> builder_in_copy(insert_point_in_copy);
-				//TODO is there a different insert point for dynamic scheduled loops?
+		//TODO is there a different insert point for dynamic scheduled loops?
 
 		// it is the last argument
 		Value *request = new_parallel_function->getArg(
@@ -743,11 +747,13 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 								2));
 
 		if (omp_lb->getType() != loop_bound_type) {
-			omp_lb = builder_in_copy.CreateSExt(omp_lb, loop_bound_type);
+			omp_lb = cast<Instruction>(
+					builder_in_copy.CreateSExt(omp_lb, loop_bound_type));
 		}
 
 		if (omp_ub->getType() != loop_bound_type) {
-			omp_ub = builder_in_copy.CreateSExt(omp_ub, loop_bound_type);
+			omp_ub = cast<Instruction>(
+					builder_in_copy.CreateSExt(omp_ub, loop_bound_type));
 		}
 
 		builder_in_copy.CreateCall(mpi_func->signoff_partitions_after_loop_iter,
@@ -768,8 +774,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 //long loop_min, long loop_max)
 		// collect all arguments for the partitioned call
 
-
-		auto* insert_point = parallel_region->get_fork_call();
+		auto *insert_point = parallel_region->get_fork_call();
 		IRBuilder<> builder(insert_point);
 
 		// args form original send
@@ -794,21 +799,18 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		min_adress->print(errs());
 		// arguments for partitioning
 		Value *A_min = get_scev_value_before_parallel_function(
-				min_adress->getStepRecurrence(*SE),
-				insert_point, parallel_region);
+				min_adress->getStepRecurrence(*SE), insert_point,
+				parallel_region);
 		// x is iteration count
 		//B
 		Value *B_min = get_scev_value_before_parallel_function(
-				min_adress->getStart(), insert_point,
-				parallel_region);
+				min_adress->getStart(), insert_point, parallel_region);
 
 		Value *A_max = get_scev_value_before_parallel_function(
-				max_adress->getStart(), insert_point,
-				parallel_region);
+				max_adress->getStart(), insert_point, parallel_region);
 
 		Value *B_max = get_scev_value_before_parallel_function(
-				max_adress->getStart(), insert_point,
-				parallel_region);
+				max_adress->getStart(), insert_point, parallel_region);
 
 		// 8th parameter of for init
 		Value *chunk_size = get_value_in_serial_part(
@@ -838,7 +840,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 					if (v->getType() == desired_t) {
 						return v;
 					} else {
-						return builder.CreateSExt(v, desired_t);
+						builder.CreateSExt(v, desired_t);
 					}
 				});
 
@@ -853,8 +855,6 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		return true;
 	}
-
-//TODO omp.dispatch.inc is maybe importatn on dynamic schedule
 
 // return true in modification where done
 	bool handle_modification_location(CallInst *send_call,
