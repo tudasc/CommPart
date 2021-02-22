@@ -58,6 +58,9 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TypeBasedAliasAnalysis.h"
 
+#include "llvm/IR/Verifier.h"
+#include "llvm/Transforms/Utils/Cloning.h"
+
 #include <assert.h>
 //#include <mpi.h>
 #include <cstring>
@@ -336,7 +339,30 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		errs() << "detected possible partitioning for MPI send Operation";
 
-IRBuilder<> builder = IRBuilder<>(parallel_region->get_parallel_for()->init);
+		IRBuilder<> builder(parallel_region->get_parallel_for()->init);
+
+// we need to duplicate thge original Function to add the MPi Request as an argument
+
+		auto *ftype = parallel_region->get_function()->getFunctionType();
+
+		std::vector<Type*> new_args;
+
+		for (auto *t : ftype->params()) {
+			new_args.push_back(t);
+
+		}
+// add the ptr to Request
+		new_args.push_back(mpi_func->mpix_request_type->getPointerTo());
+
+		auto *new_ftype = FunctionType::get(ftype->getReturnType(), new_args,
+				ftype->isVarArg());
+
+		//TODO do we need to invalidate the Microtask object?
+		auto new_name = parallel_region->get_function()->getName() + "_p";
+
+		Function *new_parallel_function = Function::Create(new_ftype,
+				parallel_region->get_function()->getLinkage(), new_name,
+				parallel_region->get_function()->getParent());
 
 //call void @__kmpc_for_static_init_4(%struct.ident_t* nonnull @3, i32 %4, i32 33, i32* nonnull %.omp.is_last, i32* nonnull %.omp.lb, i32* nonnull %.omp.ub, i32* nonnull %.omp.stride, i32 1, i32 1000) #8
 
@@ -447,123 +473,123 @@ IRBuilder<> builder = IRBuilder<>(parallel_region->get_parallel_for()->init);
 						}
 					}
 				}
-				// checked all call instructions
+			}
+			// checked all call instructions
 
-				// need to check all store instructions
-				// first we need to check if there is a store PAST the for loop accessing the ptr
-				auto *linfo = analysis_results->getLoopInfo(
-						parallel_region->get_function());
-				// we checed for the presence of the openmp loobs before
-				assert(!linfo->empty());
+			// need to check all store instructions
+			// first we need to check if there is a store PAST the for loop accessing the ptr
+			auto *linfo = analysis_results->getLoopInfo(
+					parallel_region->get_function());
+			// we checed for the presence of the openmp loobs before
+			assert(!linfo->empty());
 
-				auto *DT = analysis_results->getDomTree(
-						parallel_region->get_function());
-				auto *PDT = analysis_results->getPostDomTree(
-						parallel_region->get_function());
+			auto *DT = analysis_results->getDomTree(
+					parallel_region->get_function());
+			auto *PDT = analysis_results->getPostDomTree(
+					parallel_region->get_function());
 
-				//TODO implement analysis of multiple for loops??
-				auto *loop_exit = parallel_region->get_parallel_for()->fini;
+			//TODO implement analysis of multiple for loops??
+			auto *loop_exit = parallel_region->get_parallel_for()->fini;
 
-				AA = analysis_results->getAAResults(
-						parallel_region->get_function());
+			AA = analysis_results->getAAResults(
+					parallel_region->get_function());
 
-				// filter out all stores that can not alias
-				store_list.erase(
-						std::remove_if(store_list.begin(), store_list.end(),
-								[AA, buffer_ptr](llvm::StoreInst *s) {
-									return AA->isNoAlias(buffer_ptr,
-											s->getPointerOperand());
-								}),store_list.end());
+			// filter out all stores that can not alias
+			store_list.erase(
+					std::remove_if(store_list.begin(), store_list.end(),
+							[AA, buffer_ptr](llvm::StoreInst *s) {
+								return AA->isNoAlias(buffer_ptr,
+										s->getPointerOperand());
+							}),store_list.end());
 
-				// check if all remaining are within (or before the loop)
-				bool are_all_stores_before_loop_finish = std::all_of(
-						store_list.begin(), store_list.end(),
-						[PDT, loop_exit](llvm::StoreInst *s) {
+			// check if all remaining are within (or before the loop)
+			bool are_all_stores_before_loop_finish = std::all_of(
+					store_list.begin(), store_list.end(),
+					[PDT, loop_exit](llvm::StoreInst *s) {
 
-							return PDT->dominates(loop_exit, s);
+						return PDT->dominates(loop_exit, s);
 
-						});
+					});
 
-				//errs() << "All before loop exit?"
-				//		<< are_all_stores_before_loop_finish << "\n";
-				if (!are_all_stores_before_loop_finish) {
-					//cannot determine a partitioning if access is outside the loop
-					handle_modification_location(send_call,
-							parallel_region->get_fork_call());
-					return true;
-				}
-				//TODO do we need to consider stores before the loop?
+			//errs() << "All before loop exit?"
+			//		<< are_all_stores_before_loop_finish << "\n";
+			if (!are_all_stores_before_loop_finish) {
+				//cannot determine a partitioning if access is outside the loop
+				handle_modification_location(send_call,
+						parallel_region->get_fork_call());
+				errs() << "Stores after the loop: No partitioning possible\n";
+				return true;
+			}
+			//TODO do we need to consider stores before the loop?
 
-				// TODO is assertion correct --> was it actually checked before?
-				assert(!store_list.empty());
+			// TODO is assertion correct --> was it actually checked before?
+			assert(!store_list.empty());
 
-				// now we need to get min and maximum memory access pattern for every store in the loop
+/// now we need to get min and maximum memory access pattern for every store in the loop
 
-				auto *SE = analysis_results->getSE(
-						parallel_region->get_function());
+			auto *SE = analysis_results->getSE(parallel_region->get_function());
 
-				const SCEV *min = SE->getSCEV(
-						store_list[0]->getPointerOperand());
-				const SCEV *max = SE->getSCEV(
-						store_list[0]->getPointerOperand());
+			const SCEV *min = SE->getSCEV(store_list[0]->getPointerOperand());
+			const SCEV *max = SE->getSCEV(store_list[0]->getPointerOperand());
 
-				// skip first
-				for (auto s = ++store_list.begin(); s != store_list.end();
-						++s) {
+			// skip first
+			for (auto s = ++store_list.begin(); s != store_list.end(); ++s) {
 
-					auto *candidate = SE->getSCEV((*s)->getPointerOperand());
+				auto *candidate = SE->getSCEV((*s)->getPointerOperand());
 
-					if (SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE,
-							candidate, min)) {
-						min = candidate;
-					} else {
-						if (!SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE,
-								candidate, min))
-							errs()
-									<< "Error analyzing the memory access pattern\n";
-						// we cant do anything
-						return true;
-					}
-					if (SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE, max,
-							candidate)) {
-						min = candidate;
-					} else {
-						if (!SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE,
-								candidate, max))
-							errs()
-									<< "Error analyzing the memory access pattern\n";
-						// we cant do anything
-						return true;
-					}
+				candidate->dump();
 
-				}
-
-				auto *LI = analysis_results->getLoopInfo(
-						parallel_region->get_function());
-
-				LI->print(errs());
-				//TODO refactoring!
-				// this shcould be part of microtask?
-				// the for init call is before the loop preheader
-				auto *preheader =
-						parallel_region->get_parallel_for()->init->getParent()->getNextNode();
-
-				auto *loop = LI->getLoopFor(preheader->getNextNode());
-
-				assert(loop != nullptr);
-
-				if (SE->hasComputableLoopEvolution(min, loop)
-						&& SE->hasComputableLoopEvolution(min, loop)) {
-
-					insert_partitioning(parallel_region, send_call, min, max);
-					// done
-					return true;
+				if (SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE,
+						candidate, min)) {
+					min = candidate;
 				} else {
-					errs() << "Error analyzing the memory access pattern\n";
+					if (!SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE,
+							candidate, min))
+						errs() << "Error analyzing the memory access pattern\n";
 					// we cant do anything
 					return true;
 				}
+				if (SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE, max,
+						candidate)) {
+					min = candidate;
+				} else {
+					if (!SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE,
+							candidate, max))
+						errs() << "Error analyzing the memory access pattern\n";
+					// we cant do anything
+					return true;
 
+				}
+			}
+
+			auto *LI = analysis_results->getLoopInfo(
+					parallel_region->get_function());
+
+			LI->print(errs());
+			//TODO refactoring!
+			// this shcould be part of microtask?
+			// the for init call is before the loop preheader
+			auto *preheader =
+					parallel_region->get_parallel_for()->init->getParent()->getNextNode();
+
+			auto *loop = LI->getLoopFor(preheader->getNextNode());
+
+			assert(loop != nullptr);
+
+			//TODO must be affine not loop computable, as the loop lower bound is not known on a per thread level, obnly on a global level
+			if (SE->hasComputableLoopEvolution(min, loop)
+					&& SE->hasComputableLoopEvolution(min, loop)) {
+
+				errs() << "CALL FUNC FOR REPLACEMENT\n";
+
+				return true;
+			} else {
+				errs() << "Error analyzing the memory access pattern\n";
+				min->dump();
+				max->dump();
+
+				// we cant do anything
+				return true;
 			}
 
 		} else {
@@ -586,7 +612,7 @@ IRBuilder<> builder = IRBuilder<>(parallel_region->get_parallel_for()->init);
 
 		//Debug(M.dump(););
 
-		M.print(errs(), nullptr);
+		//M.print(errs(), nullptr);
 
 		mpi_func = get_used_mpi_functions(M);
 		if (!is_mpi_used(mpi_func)) {
@@ -646,7 +672,7 @@ IRBuilder<> builder = IRBuilder<>(parallel_region->get_parallel_for()->init);
 						//TODO need to refactor this!
 						Instruction *to_handle = get_last_instruction(
 								to_analyze);
-						bool handled = false;		// flag to abort
+						bool handled = false;				// flag to abort
 						while (!handled && to_handle != nullptr) {
 
 							to_handle->print(errs());
@@ -781,6 +807,14 @@ IRBuilder<> builder = IRBuilder<>(parallel_region->get_parallel_for()->init);
 		// find usage of sending buffer
 		// if usage == openmp fork call
 		// analyze the parallel region to find if partitioning is possible
+
+//		M.dump();
+		bool broken_dbg_info;
+		bool module_errors = verifyModule(M, &errs(), &broken_dbg_info);
+
+		if (!module_errors) {
+			errs() << "Module Verification OK\n";
+		}
 
 		errs() << "Successfully executed the pass\n\n";
 		delete mpi_func;
