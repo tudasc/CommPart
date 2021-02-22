@@ -134,10 +134,273 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		return "MPI Communication Partition";
 	}
 
-	//TODO I need to imppl a move before the parallel part
-
 	//TODO is there a better option to do it, it seems that this only reverse engenieer the analysis done by llvm
 	// calculates the start value and inserts the calculation into the program
+
+	//wrapper for debugging:
+	Value* get_value_in_serial_part(Value *in_parallel,
+			Microtask *parallel_region) {
+		auto *result = get_value_in_serial_part_impl(in_parallel,
+				parallel_region);
+
+		if (result == nullptr && in_parallel != nullptr) {
+			errs() << "Could not find value for \n";
+			in_parallel->dump();
+		}
+		return result;
+	}
+	// if value* is an alloca it will return the value stored there if applicable
+	Value* get_value_in_serial_part_impl(Value *in_parallel,
+			Microtask *parallel_region) {
+
+		//nullptr --> nullptr
+		if (in_parallel == nullptr) {
+			return nullptr;
+		}
+
+		if (auto *c = dyn_cast<Constant>(in_parallel)) {
+			// nothing to do
+			return c;
+		}
+
+		if (auto *arg = dyn_cast<Argument>(in_parallel)) {
+			return parallel_region->get_value_in_main(arg);
+		}
+
+		if (auto *load = dyn_cast<LoadInst>(in_parallel)) {
+
+			if (auto *ptr_arg = dyn_cast<Argument>(load->getPointerOperand())) {
+				//TODO do we need to handle a load from ptr given to parallel?
+				errs()
+						<< "Loading from ptr given to parallel is not supported yet\n";
+				return nullptr;
+			} else if (auto *ptr_arg = dyn_cast<AllocaInst>(
+					load->getPointerOperand())) {
+				return get_value_in_serial_part(ptr_arg, parallel_region);
+
+			} else {
+				errs() << "This is not supported yet\n";
+				load->dump();
+				load->getPointerOperand()->dump();
+				return nullptr;
+			}
+
+		}
+		if (auto *ptr_arg = dyn_cast<AllocaInst>(in_parallel)) {
+			// e.g. the values set by the for_init call
+
+			Value *stored_value = nullptr;
+			for (auto user : ptr_arg->users()) {
+				if (auto *cast = dyn_cast<CastInst>(user)) {
+					// e.g. ptr cast to pass it to llvm lifetime builtins
+
+					//TODO do we need to follow the casts usage to check it is only given to the llvm internals
+				} else if (auto *call = dyn_cast<CallInst>(user)) {
+					// call to for_init
+					if (call == parallel_region->get_parallel_for()->init) {
+						// arg 4,5,6 are allowed
+						assert(
+								(call->getArgOperand(4) == ptr_arg
+										|| call->getArgOperand(5) == ptr_arg
+										|| call->getArgOperand(6) == ptr_arg)
+										&& "This makes no sense. basing the loop acces on other args than the loop iteration count is not valid");
+						// do not abort the loop, this is legit
+					} else {
+						errs() << "Currently not supported:\n";
+						ptr_arg->dump();
+						call->dump();
+						stored_value = nullptr;
+						break;
+					}
+
+				} else if (auto *store = dyn_cast<StoreInst>(user)) {
+
+					if (!store->getParent()->getName().startswith(
+							"omp.dispatch.")) {
+
+						//TODO need to actually analyze the dispatch patrt of the loop
+						// maybne we need to enter the signoff partition call in the dispatch block?
+
+						if (stored_value == nullptr) {
+							stored_value = store->getValueOperand();
+
+						} else {
+
+							errs() << "Conflicting store operations:\n";
+							store->dump();
+							stored_value->dump();
+							stored_value = nullptr;
+							break;
+						}
+
+					}
+				} else if (isa<LoadInst>(user)) {
+					// the load inst where this alloc resulted
+					// loading is OK, nothing to take care of
+				} else {
+					errs() << "Currently not supported:\n";
+					user->dump();
+					stored_value = nullptr;
+					break;
+				}
+			}
+
+			return get_value_in_serial_part(stored_value, parallel_region);
+		}
+
+		errs() << "Error finding the vlaue in main:\n";
+		in_parallel->dump();
+		return nullptr;
+	}
+
+	// SCEV do not distinguish between ptr and i64 therefore we might need to add casts
+	// we always cast to i64 as we need this for arithmetic
+
+	Value* getAsInt(Value *v, Instruction *insert_before) {
+		return getCastedToCorrectType(v,
+				IntegerType::getInt64Ty(v->getContext()), insert_before);
+	}
+	Value* getCastedToCorrectType(Value *v, Type *t,
+			Instruction *insert_before) {
+		if (v->getType() == t) {
+			return v;
+		} else if (auto *c = dyn_cast<ConstantInt>(v)) {
+			return ConstantInt::get(t, c->getValue());
+
+		} else {
+			if (t->isIntegerTy()) {
+				assert(v->getType()->isIntOrPtrTy());
+				IRBuilder<> builder(insert_before);
+				if (t->isPointerTy()) {
+					return builder.CreateIntToPtr(v, t);
+				} else if (t->isIntegerTy()) {
+					return builder.CreatePtrToInt(v, t);
+				} else {
+					assert(false && "Should not reach this");
+				}
+
+			}
+		}
+	}
+
+// inserts the scev values outside of the parallel part
+	Value* get_scev_value_before_parallel_function(const SCEV *scev,
+			Instruction *insert_before, Microtask *parallel_region) {
+
+		scev->print(errs());
+		errs() << "\n";
+
+		if (auto *c = dyn_cast<SCEVUnknown>(scev)) {
+			c->getValue()->print(errs());
+			errs() << "\n";
+
+			return get_value_in_serial_part(c->getValue(), parallel_region);
+		}
+		if (auto *c = dyn_cast<SCEVConstant>(scev)) {
+			c->getValue()->print(errs());
+			errs() << "\n";
+			return get_value_in_serial_part(c->getValue(), parallel_region);
+		}
+
+		if (auto *c = dyn_cast<SCEVCastExpr>(scev)) {
+			IRBuilder<> builder(insert_before);
+			errs() << " cast expr\n";
+			auto *operand = c->getOperand();
+
+			if (isa<SCEVSignExtendExpr>(c)) {
+				return builder.CreateSExt(
+						get_scev_value_before_parallel_function(operand,
+								insert_before, parallel_region), c->getType());
+			}
+			if (isa<SCEVTruncateExpr>(c)) {
+				return builder.CreateTrunc(
+						get_scev_value_before_parallel_function(operand,
+								insert_before, parallel_region), c->getType());
+			}
+			if (isa<SCEVZeroExtendExpr>(c)) {
+				return builder.CreateZExt(
+						get_scev_value_before_parallel_function(operand,
+								insert_before, parallel_region), c->getType());
+			}
+		}
+		if (auto *c = dyn_cast<SCEVCommutativeExpr>(scev)) {
+			IRBuilder<> builder(insert_before);
+			errs() << " commutative expr\n";
+			if (isa<SCEVAddExpr>(c)) {
+				errs() << " add expr\n";
+
+				c->dump();
+
+				int operand = 1;
+				Value *Left_side = getAsInt(
+						get_scev_value_before_parallel_function(
+								c->getOperand(0), insert_before,
+								parallel_region), insert_before);
+				while (operand < c->getNumOperands()) {
+					Left_side = builder.CreateAdd(Left_side,
+							getAsInt(
+									get_scev_value_before_parallel_function(
+											c->getOperand(operand),
+											insert_before, parallel_region),
+									insert_before), "", c->hasNoUnsignedWrap(),
+							c->hasNoSignedWrap());
+					operand++;
+				}
+
+				auto *result = Left_side;
+
+				result->print(errs());
+				errs() << "\n";
+				return result;
+			}
+			if (isa<SCEVMulExpr>(c)) {
+				errs() << "mul expr\n";
+				assert(c->getNumOperands() > 1);
+
+				int operand = 1;
+				Value *Left_side = getAsInt(
+						get_scev_value_before_parallel_function(
+								c->getOperand(0), insert_before,
+								parallel_region), insert_before);
+				while (operand < c->getNumOperands()) {
+					builder.CreateMul(Left_side,
+							getAsInt(
+									get_scev_value_before_parallel_function(
+											c->getOperand(operand),
+											insert_before, parallel_region),
+									insert_before), "", c->hasNoUnsignedWrap(),
+							c->hasNoSignedWrap());
+					operand++;
+				}
+
+				auto *result = Left_side;
+				return result;
+			}
+		}
+		if (auto *c = dyn_cast<SCEVMinMaxExpr>(scev)) {
+			errs() << "This kind of expression is not supported yet\n";
+			assert(false);
+		}
+
+		if (auto *c = dyn_cast<SCEVAddRecExpr>(scev)) {
+			//errs() << " ERROR CALCULATING STARTPOINT: encountered another inductive expression -- this is not supported yet\n";
+			//errs() << "WARNING: This kind of expression is not fully supported yet\n";
+			//errs() << "Wuse tanative anaylisi might lead to errors\n";
+
+			// is actually correct as the outer loop loops through the chnuks
+			return get_scev_value_before_parallel_function(c->getStart(),
+					insert_before, parallel_region);
+			//assert(false);
+		}
+
+		errs() << " ERROR CALCULATING STARTPOINT\n";
+		assert(false);
+
+		return nullptr;
+	}
+
+//TODO is there a better option to do it, it seems that this only reverse engenieer the analysis done by llvm
+// calculates the start value and inserts the calculation into the program
 	Value* get_scev_value(const SCEV *scev, Instruction *insert_before) {
 
 		scev->print(errs());
@@ -278,10 +541,10 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		return std::make_pair(nullptr, nullptr);
 	}
 
-	//errs() << "\n";
+//errs() << "\n";
 
-	// get last instruction  in the sense that the return value post dominates all other instruction in the given list
-	// nullptr if not found
+// get last instruction  in the sense that the return value post dominates all other instruction in the given list
+// nullptr if not found
 	Instruction* get_last_instruction(std::vector<Instruction*> inst_list) {
 
 		if (inst_list.size() == 0) {
@@ -323,8 +586,36 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 	}
 
-	// only call if the replacement is actually safe
-	//TODO refactor to be able to make an assertion
+	//combine std::find_if and std::none_of to write stl-like find_if_exactly_one
+	template<class InputIt, class UnaryPredicate>
+	InputIt find_if_exactly_one(InputIt first, InputIt last, UnaryPredicate p) {
+		auto it = std::find_if(first, last, p);
+		if ((it != last) && std::none_of(std::next(it), last, p))
+			return it;
+		else
+			return last;
+	}
+
+	BasicBlock* find_end_block(Microtask *parallel_region) {
+
+		auto it = find_if_exactly_one(parallel_region->get_function()->begin(),
+				parallel_region->get_function()->end(),
+				[](BasicBlock &bb) {
+					return bb.getName().startswith(
+							"omp.dispatch.cond.omp.dispatch.end");
+				});
+
+		if (it == parallel_region->get_function()->end()) {
+			errs() << "Error analyzing the loops structure\n";
+			return nullptr;
+		} else {
+			return &*it;
+		}
+
+	}
+
+// only call if the replacement is actually safe
+//TODO refactor to be able to make an assertion
 	bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 			const SCEVAddRecExpr *min_adress,
 			const SCEVAddRecExpr *max_adress) {
@@ -342,8 +633,6 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		errs() << "detected possible partitioning for MPI send Operation\n";
 
-		IRBuilder<> builder(parallel_region->get_parallel_for()->init);
-
 // we need to duplicate the original Function to add the MPi Request as an argument
 
 		auto *ftype = parallel_region->get_function()->getFunctionType();
@@ -360,14 +649,12 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		auto *new_ftype = FunctionType::get(ftype->getReturnType(), new_args,
 				ftype->isVarArg());
 
-		//TODO do we need to invalidate the Microtask object?
+		//TODO do we need to invalidate the Microtask object? AT THE END OF FUNCTION when all analysis is done
 		auto new_name = parallel_region->get_function()->getName() + "_p";
 
 		Function *new_parallel_function = Function::Create(new_ftype,
 				parallel_region->get_function()->getLinkage(), new_name,
 				parallel_region->get_function()->getParent());
-
-		new_parallel_function->dump();
 
 		// contains a mapping form all original values to the clone
 		ValueToValueMapTy VMap;
@@ -377,7 +664,6 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				arg_new_iter = new_parallel_function->arg_begin();
 				arg_orig_iter != parallel_region->get_function()->arg_end();
 				++arg_orig_iter, ++arg_new_iter) {
-			//VMap[*arg_orig_iter]= *arg_new_iter;
 			std::pair<Value*, Value*> kv = std::make_pair(arg_orig_iter,
 					arg_new_iter);
 
@@ -395,53 +681,80 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		// need to add a call to signoff_partitions after a loop iteration has finished
 		Instruction *original_finish = parallel_region->get_parallel_for()->fini;
 		Instruction *new_finish = cast<Instruction>(VMap[original_finish]);
-		IRBuilder<> builder_in_copy(new_finish);// Ok to insert before the finish call --> before any implicit barrier
-		//TODO is there a different insert point for dynamic scheduled loops?
+
+		// all of this analysis happens in old version of the function!
+		auto *loop_end_block = find_end_block(parallel_region);
+		// this block must contain a store to lower bound and upper bound
+		// ptr comes from init_function
+		CallInst *init_call = parallel_region->get_parallel_for()->init;
+		auto *ptr_omp_lb = init_call->getArgOperand(4);
+		auto *ptr_omp_ub = init_call->getArgOperand(5);
+
+		// these need to be instructions in the omp.dispatch.inc block
+		Instruction *omp_lb = nullptr;
+		Instruction *omp_ub = nullptr;
+
+		for (auto &inst : *loop_end_block) {
+			if (auto *store = dyn_cast<StoreInst>(&inst)) {
+				if (store->getPointerOperand() == ptr_omp_lb) {
+					assert(
+							omp_lb == nullptr
+									&& "Only one store to .omp.lb is allowed in this block");
+					omp_lb = cast<Instruction>(store->getValueOperand());
+				}
+				if (store->getPointerOperand() == ptr_omp_ub) {
+					assert(
+							omp_ub == nullptr
+									&& "Only one store to .omp.ub is allowed in this block");
+					omp_ub = cast<Instruction>(store->getValueOperand());
+				}
+			}
+		}
+		assert(omp_lb != nullptr && omp_ub != nullptr);
+		assert(omp_lb->getParent()==omp_ub->getParent());
+		assert(loop_end_block->getPrevNode()==omp_lb->getParent());
+
+		// now transition to the copy of parallel func including the request parameter:
+		omp_lb= cast<Instruction>(VMap[omp_lb]);
+		omp_ub= cast<Instruction>(VMap[omp_ub]);
+
+		// assertions must still hold
+		assert(omp_lb != nullptr && omp_ub != nullptr);
+		assert(omp_lb->getParent()==omp_ub->getParent());
+		assert(loop_end_block->getPrevNode()==omp_lb->getParent());
+
+		// insert before final instruction of this block
+		Instruction* insert_point_in_copy = omp_lb->getParent()->getTerminator();
+		IRBuilder<> builder_in_copy(insert_point_in_copy);
+				//TODO is there a different insert point for dynamic scheduled loops?
 
 		// it is the last argument
 		Value *request = new_parallel_function->getArg(
 				new_parallel_function->getFunctionType()->getNumParams() - 1);
 
-		// these values will be set by the init call so we can load them
-		// maybe we need a cast
-		Value *min_iter = nullptr;
-		Value *max_iter = nullptr;
-
-		auto *original_init = parallel_region->get_parallel_for()->init;
-		CallInst *init_call = cast<CallInst>(VMap[original_init]);
-
-		int plower_arg_pos = 4;
-		int pupper_arg_pos = 5;
+		// maybe we need a sign_extend form i32 to i64
 
 		Type *loop_bound_type =
 				mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->getParamType(
 						1);
-		mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->dump();
 		assert(
 				loop_bound_type
 						== mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->getParamType(
 								2));
 
-		Value *plower_ptr = init_call->getArgOperand(plower_arg_pos);
-		Value *l = builder_in_copy.CreateLoad(
-				plower_ptr->getType()->getPointerElementType(), plower_ptr,
-				"plower");
-		if (l->getType() != loop_bound_type) {
-			l = builder_in_copy.CreateSExt(l, loop_bound_type);
+		if (omp_lb->getType() != loop_bound_type) {
+			omp_lb = builder_in_copy.CreateSExt(omp_lb, loop_bound_type);
 		}
-		min_iter = l;
 
-		Value *pupper_ptr = init_call->getArgOperand(plower_arg_pos);
-		Value *l2 = builder_in_copy.CreateLoad(
-				pupper_ptr->getType()->getPointerElementType(), pupper_ptr,
-				"pupper");
-		if (l2->getType() != loop_bound_type) {
-			l2 = builder_in_copy.CreateSExt(l2, loop_bound_type);
+		if (omp_ub->getType() != loop_bound_type) {
+			omp_ub = builder_in_copy.CreateSExt(omp_ub, loop_bound_type);
 		}
-		max_iter = l2;
 
-		builder_in_copy.CreateCall(mpi_func->signoff_partitions_after_loop_iter, {
-				request, min_iter, max_iter });
+		builder_in_copy.CreateCall(mpi_func->signoff_partitions_after_loop_iter,
+				{ request, omp_lb, omp_ub });
+
+		// DONE with modifying the parallel region
+		// the fork_call will be modified later
 
 //		mpi_func->signoff_partitions_after_loop_iter;
 
@@ -453,6 +766,81 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 // access= pattern ax+b
 //long A_min, long B_min, long A_max, long B_max, long chunk_size,
 //long loop_min, long loop_max)
+		// collect all arguments for the partitioned call
+
+
+		auto* insert_point = parallel_region->get_fork_call();
+		IRBuilder<> builder(insert_point);
+
+		// args form original send
+		Value *buf = send_call->getArgOperand(0);
+		Value *count = send_call->getArgOperand(1);
+		Value *datatype = send_call->getArgOperand(2);
+		Value *dest = send_call->getArgOperand(3);
+		Value *tag = send_call->getArgOperand(4);
+		Value *comm = send_call->getArgOperand(5);
+
+		//TODO do we need to check if all of those values are accessible from this function?
+
+		// MPI_Request
+		Value *request_ptr = builder.CreateAlloca(mpi_func->mpix_request_type,
+				nullptr, "mpix_request");
+
+		auto *SE = analysis_results->getSE(parallel_region->get_function());
+
+		//TODO will be defined in newer llvm version:
+		//SE->getBackedgeTakenCount(loop,ScalarEvolution::ExitCountKind::SymbolicMaximum )->dump();
+
+		min_adress->print(errs());
+		// arguments for partitioning
+		Value *A_min = get_scev_value_before_parallel_function(
+				min_adress->getStepRecurrence(*SE),
+				insert_point, parallel_region);
+		// x is iteration count
+		//B
+		Value *B_min = get_scev_value_before_parallel_function(
+				min_adress->getStart(), insert_point,
+				parallel_region);
+
+		Value *A_max = get_scev_value_before_parallel_function(
+				max_adress->getStart(), insert_point,
+				parallel_region);
+
+		Value *B_max = get_scev_value_before_parallel_function(
+				max_adress->getStart(), insert_point,
+				parallel_region);
+
+		// 8th parameter of for init
+		Value *chunk_size = get_value_in_serial_part(
+				parallel_region->get_parallel_for()->init->getArgOperand(8),
+				parallel_region);
+
+		// 4th parameter of for init
+		Value *loop_min = get_value_in_serial_part(
+				parallel_region->get_parallel_for()->init->getArgOperand(4),
+				parallel_region);
+		// 5th parameter of for init
+		Value *loop_max = get_value_in_serial_part(
+				parallel_region->get_parallel_for()->init->getArgOperand(5),
+				parallel_region);
+
+		std::vector<Value*> argument_list_with_wrong_types { buf, count,
+				datatype, dest, tag, comm, request, A_min, B_min, A_max, B_max,
+				chunk_size, loop_min, loop_max };
+
+		// add a sign extension for all args if needed
+		std::vector<Value*> argument_list;
+		std::transform(argument_list_with_wrong_types.begin(),
+				argument_list_with_wrong_types.end(),
+				mpi_func->partition_sending_op->getFunctionType()->param_begin(),
+				std::back_inserter(argument_list),
+				[&builder](Value *v, Type *desired_t) {
+					if (v->getType() == desired_t) {
+						return v;
+					} else {
+						return builder.CreateSExt(v, desired_t);
+					}
+				});
 
 //TODO: we need the access pattern value outside the microtask!
 // then we just need to build all args, insert the partitioning call
@@ -466,7 +854,9 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		return true;
 	}
 
-	// return true in modification where done
+//TODO omp.dispatch.inc is maybe importatn on dynamic schedule
+
+// return true in modification where done
 	bool handle_modification_location(CallInst *send_call,
 			Instruction *last_modification) {
 
@@ -482,15 +872,15 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		return false;
 	}
 
-	//TODO change discover of buffer ptr
-	// buffer ptr may be the higher order ptr (before GEP)
-	// send might be done on ptr resulting from GEP
+//TODO change discover of buffer ptr
+// buffer ptr may be the higher order ptr (before GEP)
+// send might be done on ptr resulting from GEP
 
-	// returns true if fork call is handled
-	// false if thread doesn't write to buffer and nothing need to be done
+// returns true if fork call is handled
+// false if thread doesn't write to buffer and nothing need to be done
 
-	//TODO call_handle_modification at all exits of function?
-	// or refactor so that return means something different
+//TODO call_handle_modification at all exits of function?
+// or refactor so that return means something different
 	bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 
 		auto *buffer_ptr_in_main = send_call->getArgOperand(0);
@@ -649,7 +1039,6 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 			auto *LI = analysis_results->getLoopInfo(
 					parallel_region->get_function());
 
-			LI->print(errs());
 			//TODO refactoring!
 			// this shcould be part of microtask?
 			// the for init call is before the loop preheader
@@ -659,6 +1048,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 			auto *loop = LI->getLoopFor(preheader->getNextNode());
 
 			assert(loop != nullptr);
+			//loop->print(errs()
 
 			if (auto *min_correct_form = dyn_cast<SCEVAddRecExpr>(min)) {
 				if (auto *max_correct_form = dyn_cast<SCEVAddRecExpr>(max)) {
@@ -703,7 +1093,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		//Debug(M.dump(););
 
-		//M.print(errs(), nullptr);
+		M.print(errs(), nullptr);
 
 		mpi_func = get_used_mpi_functions(M);
 		if (!is_mpi_used(mpi_func)) {
@@ -899,7 +1289,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		// if usage == openmp fork call
 		// analyze the parallel region to find if partitioning is possible
 
-		M.dump();
+		//M.dump();
 		bool broken_dbg_info;
 		bool module_errors = verifyModule(M, &errs(), &broken_dbg_info);
 
