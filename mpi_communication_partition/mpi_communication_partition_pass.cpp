@@ -326,7 +326,10 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 	// only call if the replacement is actually safe
 	//TODO refactor to be able to make an assertion
 	bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
-			const SCEV *min_adress, const SCEV *max_adress) {
+			const SCEVAddRecExpr *min_adress,
+			const SCEVAddRecExpr *max_adress) {
+
+		assert(min_adress->isAffine() && max_adress->isAffine());
 
 		//TOOD for a static schedule, there should be a better way of getting the chunk_size!
 
@@ -337,11 +340,11 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				parallel_region->get_parallel_for()->init->getParent()->getNextNode();
 		auto *loop = LI->getLoopFor(preheader->getNextNode());
 
-		errs() << "detected possible partitioning for MPI send Operation";
+		errs() << "detected possible partitioning for MPI send Operation\n";
 
 		IRBuilder<> builder(parallel_region->get_parallel_for()->init);
 
-// we need to duplicate thge original Function to add the MPi Request as an argument
+// we need to duplicate the original Function to add the MPi Request as an argument
 
 		auto *ftype = parallel_region->get_function()->getFunctionType();
 
@@ -363,6 +366,84 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		Function *new_parallel_function = Function::Create(new_ftype,
 				parallel_region->get_function()->getLinkage(), new_name,
 				parallel_region->get_function()->getParent());
+
+		new_parallel_function->dump();
+
+		// contains a mapping form all original values to the clone
+		ValueToValueMapTy VMap;
+
+		// build mapping for all the original arguments
+		for (auto arg_orig_iter = parallel_region->get_function()->arg_begin(),
+				arg_new_iter = new_parallel_function->arg_begin();
+				arg_orig_iter != parallel_region->get_function()->arg_end();
+				++arg_orig_iter, ++arg_new_iter) {
+			//VMap[*arg_orig_iter]= *arg_new_iter;
+			std::pair<Value*, Value*> kv = std::make_pair(arg_orig_iter,
+					arg_new_iter);
+
+			VMap.insert(kv);
+		}
+
+		//only one return in ompoutlined
+		SmallVector<ReturnInst*, 1> returns;
+
+		// if migrating to newer LLvm false need to become llvm::CloneFunctionChangeType::LocalChangesOnly
+		llvm::CloneFunctionInto(new_parallel_function,
+				parallel_region->get_function(), VMap, false, returns);
+		//, NameSuffix, CodeInfo, TypeMapper, Materializer)
+
+		// need to add a call to signoff_partitions after a loop iteration has finished
+		Instruction *original_finish = parallel_region->get_parallel_for()->fini;
+		Instruction *new_finish = cast<Instruction>(VMap[original_finish]);
+		IRBuilder<> builder_in_copy(new_finish);// Ok to insert before the finish call --> before any implicit barrier
+		//TODO is there a different insert point for dynamic scheduled loops?
+
+		// it is the last argument
+		Value *request = new_parallel_function->getArg(
+				new_parallel_function->getFunctionType()->getNumParams() - 1);
+
+		// these values will be set by the init call so we can load them
+		// maybe we need a cast
+		Value *min_iter = nullptr;
+		Value *max_iter = nullptr;
+
+		auto *original_init = parallel_region->get_parallel_for()->init;
+		CallInst *init_call = cast<CallInst>(VMap[original_init]);
+
+		int plower_arg_pos = 4;
+		int pupper_arg_pos = 5;
+
+		Type *loop_bound_type =
+				mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->getParamType(
+						1);
+		mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->dump();
+		assert(
+				loop_bound_type
+						== mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->getParamType(
+								2));
+
+		Value *plower_ptr = init_call->getArgOperand(plower_arg_pos);
+		Value *l = builder_in_copy.CreateLoad(
+				plower_ptr->getType()->getPointerElementType(), plower_ptr,
+				"plower");
+		if (l->getType() != loop_bound_type) {
+			l = builder_in_copy.CreateSExt(l, loop_bound_type);
+		}
+		min_iter = l;
+
+		Value *pupper_ptr = init_call->getArgOperand(plower_arg_pos);
+		Value *l2 = builder_in_copy.CreateLoad(
+				pupper_ptr->getType()->getPointerElementType(), pupper_ptr,
+				"pupper");
+		if (l2->getType() != loop_bound_type) {
+			l2 = builder_in_copy.CreateSExt(l2, loop_bound_type);
+		}
+		max_iter = l2;
+
+		builder_in_copy.CreateCall(mpi_func->signoff_partitions_after_loop_iter, {
+				request, min_iter, max_iter });
+
+//		mpi_func->signoff_partitions_after_loop_iter;
 
 //call void @__kmpc_for_static_init_4(%struct.ident_t* nonnull @3, i32 %4, i32 33, i32* nonnull %.omp.is_last, i32* nonnull %.omp.lb, i32* nonnull %.omp.ub, i32* nonnull %.omp.stride, i32 1, i32 1000) #8
 
@@ -407,6 +488,9 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 	// returns true if fork call is handled
 	// false if thread doesn't write to buffer and nothing need to be done
+
+	//TODO call_handle_modification at all exits of function?
+	// or refactor so that return means something different
 	bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 
 		auto *buffer_ptr_in_main = send_call->getArgOperand(0);
@@ -576,21 +660,28 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 			assert(loop != nullptr);
 
-			//TODO must be affine not loop computable, as the loop lower bound is not known on a per thread level, obnly on a global level
-			if (SE->hasComputableLoopEvolution(min, loop)
-					&& SE->hasComputableLoopEvolution(min, loop)) {
+			if (auto *min_correct_form = dyn_cast<SCEVAddRecExpr>(min)) {
+				if (auto *max_correct_form = dyn_cast<SCEVAddRecExpr>(max)) {
+					if (min_correct_form->isAffine()
+							&& max_correct_form->isAffine()) {
 
-				errs() << "CALL FUNC FOR REPLACEMENT\n";
+						insert_partitioning(parallel_region, send_call,
+								min_correct_form, max_correct_form);
 
-				return true;
-			} else {
-				errs() << "Error analyzing the memory access pattern\n";
-				min->dump();
-				max->dump();
+						return true;
+					}
 
-				// we cant do anything
-				return true;
+				}
 			}
+
+			//TODO check if values are constant?
+
+			errs() << "Error analyzing the memory access pattern\n";
+			min->dump();
+			max->dump();
+
+			// we cant do anything
+			return true;
 
 		} else {
 			// no parallel for
@@ -808,7 +899,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		// if usage == openmp fork call
 		// analyze the parallel region to find if partitioning is possible
 
-//		M.dump();
+		M.dump();
 		bool broken_dbg_info;
 		bool module_errors = verifyModule(M, &errs(), &broken_dbg_info);
 
