@@ -35,6 +35,7 @@ int main(int argc, char **argv) {
 
 	// buffer access
 #pragma omp parallel for firstprivate(buffer) schedule(static,1000)
+//#pragma omp parallel for firstprivate(buffer) schedule(dynamic,1000)
 //#pragma omp parallel for
 	for (int i = 0; i < TOTAL_SIZE; ++i) {
 		buffer[i] = i * rank;
