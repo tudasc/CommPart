@@ -755,6 +755,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		//TODO insert it at top of function
 
 // arguments for partitioning
+
+
 		Value *A_min = get_scev_value_before_parallel_function(
 				min_adress->getStepRecurrence(*SE), insert_point,
 				parallel_region);
@@ -763,7 +765,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				min_adress->getStart(), insert_point, parallel_region);
 
 		Value *A_max = get_scev_value_before_parallel_function(
-				max_adress->getStart(), insert_point, parallel_region);
+				max_adress->getStepRecurrence(*SE), insert_point, parallel_region);
 
 		Value *B_max = get_scev_value_before_parallel_function(
 				max_adress->getStart(), insert_point, parallel_region);
