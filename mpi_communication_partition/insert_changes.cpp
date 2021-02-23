@@ -20,7 +20,6 @@
 #include "analysis_results.h"
 #include "mpi_functions.h"
 
-
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -28,8 +27,6 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 using namespace llvm;
-
-
 
 //TODO is there a better option to do it, it seems that this only reverse engenieer the analysis done by llvm
 // calculates the start value and inserts the calculation into the program
@@ -39,8 +36,7 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 //wrapper for debugging:
 Value* get_value_in_serial_part(Value *in_parallel,
 		Microtask *parallel_region) {
-	auto *result = get_value_in_serial_part_impl(in_parallel,
-			parallel_region);
+	auto *result = get_value_in_serial_part_impl(in_parallel, parallel_region);
 
 	if (result == nullptr && in_parallel != nullptr) {
 		errs() << "Could not find value for \n";
@@ -117,8 +113,7 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 	return nullptr;
 }
 
-Value* getCastedToCorrectType(Value *v, Type *t,
-		Instruction *insert_before) {
+Value* getCastedToCorrectType(Value *v, Type *t, Instruction *insert_before) {
 	if (v->getType() == t) {
 		return v;
 	} else if (auto *c = dyn_cast<ConstantInt>(v)) {
@@ -144,8 +139,8 @@ Value* getCastedToCorrectType(Value *v, Type *t,
 // we always cast to i64 as we need this for arithmetic
 
 Value* getAsInt(Value *v, Instruction *insert_before) {
-	return getCastedToCorrectType(v,
-			IntegerType::getInt64Ty(v->getContext()), insert_before);
+	return getCastedToCorrectType(v, IntegerType::getInt64Ty(v->getContext()),
+			insert_before);
 }
 
 // inserts the scev values outside of the parallel part
@@ -196,18 +191,16 @@ Value* get_scev_value_before_parallel_function(const SCEV *scev,
 			//c->dump();
 
 			Value *Left_side = getAsInt(
-					get_scev_value_before_parallel_function(
-							c->getOperand(0), insert_before,
-							parallel_region), insert_before);
+					get_scev_value_before_parallel_function(c->getOperand(0),
+							insert_before, parallel_region), insert_before);
 			int operand = 1;
 			while (operand < c->getNumOperands()) {
 				Left_side = builder.CreateAdd(Left_side,
 						getAsInt(
 								get_scev_value_before_parallel_function(
-										c->getOperand(operand),
-										insert_before, parallel_region),
-								insert_before), "", c->hasNoUnsignedWrap(),
-						c->hasNoSignedWrap());
+										c->getOperand(operand), insert_before,
+										parallel_region), insert_before), "",
+						c->hasNoUnsignedWrap(), c->hasNoSignedWrap());
 				operand++;
 			}
 
@@ -224,17 +217,15 @@ Value* get_scev_value_before_parallel_function(const SCEV *scev,
 
 			int operand = 1;
 			Value *Left_side = getAsInt(
-					get_scev_value_before_parallel_function(
-							c->getOperand(0), insert_before,
-							parallel_region), insert_before);
+					get_scev_value_before_parallel_function(c->getOperand(0),
+							insert_before, parallel_region), insert_before);
 			while (operand < c->getNumOperands()) {
-				Left_side= builder.CreateMul(Left_side,
+				Left_side = builder.CreateMul(Left_side,
 						getAsInt(
 								get_scev_value_before_parallel_function(
-										c->getOperand(operand),
-										insert_before, parallel_region),
-								insert_before), "", c->hasNoUnsignedWrap(),
-						c->hasNoSignedWrap());
+										c->getOperand(operand), insert_before,
+										parallel_region), insert_before), "",
+						c->hasNoUnsignedWrap(), c->hasNoSignedWrap());
 				operand++;
 			}
 
@@ -280,24 +271,11 @@ bool handle_modification_location(CallInst *send_call,
 	return false;
 }
 
-// only call if the replacement is actually safe
-//TODO refactor to be able to make an assertion
-bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
-		const SCEVAddRecExpr *min_adress, const SCEVAddRecExpr *max_adress) {
-
-	assert(min_adress->isAffine() && max_adress->isAffine());
-
-	//TOOD for a static schedule, there should be a better way of getting the chunk_size!
-
-	auto *LI = analysis_results->getLoopInfo(parallel_region->get_function());
-
-	auto *preheader =
-			parallel_region->get_parallel_for()->init->getParent()->getNextNode();
-	auto *loop = LI->getLoopFor(preheader->getNextNode());
-
-	errs() << "detected possible partitioning for MPI send Operation\n";
-
-	// we need to duplicate the original Function to add the MPi Request as an argument
+// duplicates the parallel_region adding the mpi_request parameter
+// will maorfy vmpap to contain the mapping old vars -> new vars
+// expect empty vmap
+Function* duplicate_parallel_function_with_added_request(
+		Microtask *parallel_region, ValueToValueMapTy &VMap) {
 
 	auto *ftype = parallel_region->get_function()->getFunctionType();
 
@@ -320,9 +298,6 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 			parallel_region->get_function()->getLinkage(), new_name,
 			parallel_region->get_function()->getParent());
 
-	// contains a mapping form all original values to the clone
-	ValueToValueMapTy VMap;
-
 	// build mapping for all the original arguments
 	for (auto arg_orig_iter = parallel_region->get_function()->arg_begin(),
 			arg_new_iter = new_parallel_function->arg_begin();
@@ -342,10 +317,14 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 			parallel_region->get_function(), VMap, false, returns);
 	//, NameSuffix, CodeInfo, TypeMapper, Materializer)
 
+	return new_parallel_function;
+}
+
+void add_partition_signoff_call(ValueToValueMapTy &VMap,
+		Microtask *parallel_region, Function *new_parallel_function) {
 	// need to add a call to signoff_partitions after a loop iteration has finished
 	Instruction *original_finish = parallel_region->get_parallel_for()->fini;
 	Instruction *new_finish = cast<Instruction>(VMap[original_finish]);
-
 	// all of this analysis happens in old version of the function!
 	auto *loop_end_block = parallel_region->find_loop_end_block();
 	// this block must contain a store to lower bound and upper bound
@@ -353,11 +332,9 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 	CallInst *init_call = parallel_region->get_parallel_for()->init;
 	auto *ptr_omp_lb = init_call->getArgOperand(4);
 	auto *ptr_omp_ub = init_call->getArgOperand(5);
-
 	// these need to be instructions in the omp.dispatch.inc block
 	Instruction *omp_lb = nullptr;
 	Instruction *omp_ub = nullptr;
-
 	for (auto &inst : *loop_end_block) {
 		if (auto *store = dyn_cast<StoreInst>(&inst)) {
 			if (store->getPointerOperand() == ptr_omp_lb) {
@@ -374,35 +351,26 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 			}
 		}
 	}
-
 	assert(omp_lb != nullptr && omp_ub != nullptr);
 	assert(omp_lb->getParent() == omp_ub->getParent());
 	assert(loop_end_block->getPrevNode() == omp_lb->getParent());
-
 	// now transition to the copy of parallel func including the request parameter:
 	omp_lb = cast<Instruction>(VMap[omp_lb]);
 	omp_ub = cast<Instruction>(VMap[omp_ub]);
-
 	//TODO these are the wrong values!!!
-
 	// assertions must still hold
 	assert(omp_lb != nullptr && omp_ub != nullptr);
 	assert(omp_lb->getParent() == omp_ub->getParent());
-
 	//assert(loop_end_block->getPrevNode() == omp_lb->getParent());
 	// if we want to test this assertion we need to first get the loop_end_block in the copy
-
 	// insert before final instruction of this block
 	Instruction *insert_point_in_copy = omp_lb->getParent()->getTerminator();
 	IRBuilder<> builder_in_copy(insert_point_in_copy);
 	//TODO is there a different insert point for dynamic scheduled loops?
-
 	// it is the last argument
 	Value *request = new_parallel_function->getArg(
 			new_parallel_function->getFunctionType()->getNumParams() - 1);
-
 	// maybe we need a sign_extend form i32 to i64
-
 	Type *loop_bound_type =
 			mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->getParamType(
 					1);
@@ -410,24 +378,21 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 			loop_bound_type
 					== mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->getParamType(
 							2));
-
 	if (omp_lb->getType() != loop_bound_type) {
 		omp_lb = cast<Instruction>(
 				builder_in_copy.CreateSExt(omp_lb, loop_bound_type));
 	}
-
 	if (omp_ub->getType() != loop_bound_type) {
 		omp_ub = cast<Instruction>(
 				builder_in_copy.CreateSExt(omp_ub, loop_bound_type));
 	}
-
 	builder_in_copy.CreateCall(mpi_func->signoff_partitions_after_loop_iter, {
 			request, omp_lb, omp_ub });
+}
 
-	// DONE with modifying the parallel region
-	// the fork_call will be modified later
-
-	//		mpi_func->signoff_partitions_after_loop_iter;
+void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
+		Microtask *parallel_region, CallInst *send_call,
+		const SCEVAddRecExpr *min_adress, const SCEVAddRecExpr *max_adress) {
 
 	//call void @__kmpc_for_static_init_4(%struct.ident_t* nonnull @3, i32 %4, i32 33, i32* nonnull %.omp.is_last, i32* nonnull %.omp.lb, i32* nonnull %.omp.ub, i32* nonnull %.omp.stride, i32 1, i32 1000) #8
 
@@ -439,9 +404,6 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 	//long loop_min, long loop_max)
 	// collect all arguments for the partitioned call
 
-	auto *insert_point = parallel_region->get_fork_call();
-	IRBuilder<> builder(insert_point);
-
 	// args form original send
 	Value *buf = send_call->getArgOperand(0);
 	Value *count = send_call->getArgOperand(1);
@@ -451,10 +413,6 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 	Value *comm = send_call->getArgOperand(5);
 
 	//TODO do we need to check if all of those values are accessible from this function?
-
-	// MPI_Request
-	Value *request_ptr = builder.CreateAlloca(mpi_func->mpix_request_type,
-			nullptr, "mpix_request");
 
 	auto *SE = analysis_results->getSE(parallel_region->get_function());
 	//TODO insert it at top of function
@@ -466,10 +424,6 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 
 	Value *B_min = get_scev_value_before_parallel_function(
 			min_adress->getStart(), insert_point, parallel_region);
-
-	//{{((4 * (sext i32 %7 to i64))<nsw> + %buffer)<nsw>,+,(4 * (sext i32 %8 to i64))<nsw>}<%omp.inner.for.cond.preheader>,+,4}<%omp.inner.for.body>
-	//{{((4 * (sext i32 %7 to i64))<nsw> + %buffer)<nsw>,+,(4 * (sext i32 %8 to i64))<nsw>}<%omp.inner.for.cond.preheader>,+,4}<%omp.inner.for.body>
-	// min should be equal to max im my example
 
 	Value *A_max = get_scev_value_before_parallel_function(
 			max_adress->getStepRecurrence(*SE), insert_point, parallel_region);
@@ -517,17 +471,39 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 			});
 
 	//errs() << "Collected all Values: insert partitioning call\n";
-	builder.SetInsertPoint(insert_point);
+	IRBuilder<> builder(insert_point);
 
 	builder.CreateCall(mpi_func->partition_sending_op, argument_list,
 			"partitions");
+}
 
-	// start the communication
-	builder.CreateCall(mpi_func->mpix_Start, { request_ptr });
+void replace_old_send_with_wait(CallInst* send_call,Value* request_ptr){
+	// now we need to replace the send call with the wait
+		IRBuilder<> builder(send_call);
 
+		//TODO set status ignore instead?
+
+		Type *MPI_status_ptr_type =
+				mpi_func->mpix_Wait->getFunctionType()->getParamType(1);
+
+		Value *status_ptr = builder.CreateAlloca(
+				MPI_status_ptr_type->getPointerElementType(), 0, "mpi_status");
+
+		Value *new_send_call = builder.CreateCall(mpi_func->mpix_Wait, {
+				request_ptr, status_ptr });
+
+		// and remove the old send call
+		send_call->replaceAllUsesWith(new_send_call);
+		send_call->eraseFromParent();
+}
+
+CallInst* insert_new_fork_call(Instruction *insert_point,
+		Microtask *parallel_region, Function *new_parallel_function, Value* request_ptr) {
 	// fork_call
 	//call void (%struct.ident_t*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%struct.ident_t* nonnull @2, i32 2, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, i32*, i32*)* @.omp_outlined. to void (i32*, i32*, ...)*), i8* %call3, i32* nonnull %rank)
 	// change the call to the new ompoutlined
+
+	IRBuilder<> builder(insert_point);
 
 	auto *original_fork_call = parallel_region->get_fork_call();
 	auto original_arg_it = original_fork_call->arg_begin();
@@ -561,12 +537,60 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 	new_args.push_back(request_ptr);
 
 	errs() << "insert new fork call\n";
-	auto *new_call = builder.CreateCall(original_fork_call->getCalledFunction(),
+	return builder.CreateCall(original_fork_call->getCalledFunction(),
 			new_args);
+}
 
-	Function *old_ompoutlined = original_fork_call->getCalledFunction();
+// only call if the replacement is actually safe
+//TODO refactor to be able to make an assertion?
+bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
+		const SCEVAddRecExpr *min_adress, const SCEVAddRecExpr *max_adress) {
+
+	assert(min_adress->isAffine() && max_adress->isAffine());
+
+	//TOOD for a static schedule, there should be a better way of getting the chunk_size!
+
+	auto *LI = analysis_results->getLoopInfo(parallel_region->get_function());
+
+	auto *preheader =
+			parallel_region->get_parallel_for()->init->getParent()->getNextNode();
+	auto *loop = LI->getLoopFor(preheader->getNextNode());
+
+	errs() << "detected possible partitioning for MPI send Operation\n";
+
+	// we need to duplicate the original Function to add the MPi Request as an argument
+
+	// contains a mapping form all original values to the clone
+	ValueToValueMapTy VMap;
+	Function *new_parallel_function =
+			duplicate_parallel_function_with_added_request(parallel_region,
+					VMap);
+
+	// need to add a call to signoff_partitions after a loop iteration has finished
+	add_partition_signoff_call(VMap, parallel_region, new_parallel_function);
+
+	auto *insert_point = parallel_region->get_fork_call();
+
+	IRBuilder<> builder(insert_point);
+	// MPI_Request
+	Value *request_ptr = builder.CreateAlloca(mpi_func->mpix_request_type,
+			nullptr, "mpix_request");
+
+	add_partition_init_call(insert_point, request_ptr, parallel_region,
+			send_call, min_adress, max_adress);
+
+	// need to reset insert point if code was inserted before insert point but after position of builder
+	builder.SetInsertPoint(insert_point);
+	// start the communication
+	builder.CreateCall(mpi_func->mpix_Start, { request_ptr });
+
+	auto *new_fork_call = insert_new_fork_call(insert_point, parallel_region,
+			new_parallel_function,request_ptr);
+
+	Function *old_ompoutlined = parallel_region->get_function();
+	CallInst* original_fork_call = parallel_region->get_fork_call();
 	// remove old call
-	original_fork_call->replaceAllUsesWith(new_call);// unnecessary as it is c void return anyway
+	original_fork_call->replaceAllUsesWith(new_fork_call);// unnecessary as it is c void return anyway
 	original_fork_call->eraseFromParent();
 	// remove old function if no longer needed
 	if (old_ompoutlined->user_empty()) {
@@ -578,22 +602,9 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 			u->dump();
 	}
 
-	// now we need to replace the send call with the wait
-	builder.SetInsertPoint(send_call);
+	//TODO do we need to invalidate the microtask obj now?
 
-	//TODO set status ignore instead?
-
-	Type *MPI_status_ptr_type =
-			mpi_func->mpix_Wait->getFunctionType()->getParamType(1);
-
-	Value *status_ptr = builder.CreateAlloca(
-			MPI_status_ptr_type->getPointerElementType(), 0, "mpi_status");
-
-	Value *new_send_call = builder.CreateCall(mpi_func->mpix_Wait, {
-			request_ptr, status_ptr });
-	// and finally remove the old send call
-	send_call->replaceAllUsesWith(new_send_call);
-	send_call->eraseFromParent();
+	replace_old_send_with_wait(send_call,request_ptr);
 
 	return true;
 }
