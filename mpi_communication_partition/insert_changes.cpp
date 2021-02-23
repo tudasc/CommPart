@@ -131,6 +131,9 @@ Value* getCastedToCorrectType(Value *v, Type *t, Instruction *insert_before) {
 				assert(false && "Should not reach this");
 				return nullptr;
 			}
+		}else{
+			assert(false && "Should not reach this");
+			return nullptr;
 		}
 	}
 }
@@ -193,7 +196,7 @@ Value* get_scev_value_before_parallel_function(const SCEV *scev,
 			Value *Left_side = getAsInt(
 					get_scev_value_before_parallel_function(c->getOperand(0),
 							insert_before, parallel_region), insert_before);
-			int operand = 1;
+			unsigned int operand = 1;
 			while (operand < c->getNumOperands()) {
 				Left_side = builder.CreateAdd(Left_side,
 						getAsInt(
@@ -215,7 +218,7 @@ Value* get_scev_value_before_parallel_function(const SCEV *scev,
 			//c->dump();
 			assert(c->getNumOperands() > 1);
 
-			int operand = 1;
+			unsigned int operand = 1;
 			Value *Left_side = getAsInt(
 					get_scev_value_before_parallel_function(c->getOperand(0),
 							insert_before, parallel_region), insert_before);
