@@ -15,6 +15,11 @@
  **/
 std::vector<llvm::User *> get_function_users(llvm::Module &, llvm::StringRef);
 
+// get last instruction  in the sense that the return value post dominates all other instruction in the given list
+// nullptr if not found
+llvm::Instruction* get_last_instruction(std::vector<llvm::Instruction*> inst_list);
+
+
 /**
  * Searches the Function for all uses of instructions of type T and returns them in a
  * vector
@@ -34,6 +39,16 @@ template <class T> std::vector<T *> get_instruction_in_function(llvm::Function *
     }
     return instructions;
 }
+
+//combine std::find_if and std::none_of to write stl-like find_if_exactly_one
+	template<class InputIt, class UnaryPredicate>
+	InputIt find_if_exactly_one(InputIt first, InputIt last, UnaryPredicate p) {
+		auto it = std::find_if(first, last, p);
+		if ((it != last) && std::none_of(std::next(it), last, p))
+			return it;
+		else
+			return last;
+	}
 
 /**
  * Searches the whole Module for all instructions of Type T and returns them in a
@@ -76,4 +91,6 @@ int get_mpi_datatype(llvm::Value *);
  **/
 size_t get_size_in_Byte(llvm::Module &, llvm::Value *);
 size_t get_size_in_Byte(llvm::Module &, llvm::Type *);
+
+
 #endif

@@ -69,13 +69,16 @@ RequiredAnalysisResults::RequiredAnalysisResults(Pass *parent_pass, Module* M) {
 }
 
 llvm::AAResults* RequiredAnalysisResults::getAAResults(llvm::Function *f) {
-	if (current_AA_function != f) {
+	/*if (current_AA_function != f) {
 		current_AA_function = f;
 		current_AA = &assertion_checker_pass->getAnalysis<AAResultsWrapperPass>(
 				*f).getAAResults();
-	}
+	}*/
 
-	return current_AA;
+	return &assertion_checker_pass->getAnalysis<AAResultsWrapperPass>(
+			*f).getAAResults();
+
+	//return current_AA;
 }
 
 llvm::LoopInfo* RequiredAnalysisResults::getLoopInfo(llvm::Function *f) {

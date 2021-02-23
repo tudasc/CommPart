@@ -132,3 +132,25 @@ llvm::Value* Microtask::get_value_in_main(llvm::Value *val) {
 	return nullptr;
 
 }
+
+BasicBlock* Microtask::find_loop_end_block() {
+
+	if (this->get_parallel_for()==nullptr){
+		return nullptr;
+	}
+
+	auto it = find_if_exactly_one(_function->begin(),
+			_function->end(),
+			[](BasicBlock &bb) {
+				return bb.getName().startswith(
+						"omp.dispatch.cond.omp.dispatch.end");
+			});
+
+	if (it == _function->end()) {
+		errs() << "Error analyzing the loops structure\n";
+		return nullptr;
+	} else {
+		return &*it;
+	}
+
+}

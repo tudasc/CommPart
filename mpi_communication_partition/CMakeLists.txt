@@ -12,6 +12,10 @@ add_library(mpi_communication_partition MODULE
     Openmp_region.cpp
     helper.cpp
     helper.h
+    insert_changes.cpp
+    insert_changes.h
+    sending_partitioning.h
+    sending_partitioning.cpp
 )
 
 # if one wants to use mpi

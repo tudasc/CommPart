@@ -81,6 +81,9 @@ struct mpi_functions {
   llvm::Type* mpix_request_type = nullptr;
 };
 
+// will be managed by main
+extern struct mpi_functions *mpi_func;
+
 struct mpi_functions *get_used_mpi_functions(llvm::Module &M);
 
 bool is_mpi_used(struct mpi_functions *mpi_func);

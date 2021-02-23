@@ -1,4 +1,5 @@
 #include "helper.h"
+#include "analysis_results.h"
 
 #include <mpi.h>
 
@@ -126,3 +127,48 @@ size_t get_size_in_Byte(llvm::Module &M, llvm::Type *type)
     DataLayout *TD = new DataLayout(&M);
     return TD->getTypeAllocSize(type);
 }
+
+
+//TODO this function needs the PdomTree ananlyis. Maybe move it to analysis instead of helper funcitons?
+// get last instruction  in the sense that the return value post dominates all other instruction in the given list
+// nullptr if not found
+	Instruction* get_last_instruction(std::vector<Instruction*> inst_list) {
+
+		if (inst_list.size() == 0) {
+			return nullptr;
+		}
+
+		Instruction *current_instruction = inst_list[0];
+		bool is_viable = true;
+		auto *Pdomtree = analysis_results->getPostDomTree(
+				current_instruction->getFunction());
+
+// first entry is current candidate
+		for (auto it = inst_list.begin() + 1; it < inst_list.end(); ++it) {
+			if (Pdomtree->dominates(*it, current_instruction)) {
+				current_instruction = *it;
+			} else if (!Pdomtree->dominates(current_instruction, *it)) {
+				// no instruction dominates the other
+				is_viable = false;
+			}
+		}
+
+		if (is_viable) {
+			return current_instruction;
+		} else {
+			// need to double-check if this dominates all other instructions
+			// Maybe A->C b-> C but the missing order between A and B will set is_viable flag to false
+			// therefore we need to recheck
+			for (auto *i : inst_list) {
+				if (i != current_instruction
+						&& !Pdomtree->dominates(current_instruction, i)) {
+					// found a non dominate relation: abort
+					return nullptr;
+				}
+			}
+			// successfully passed test above
+			return current_instruction;
+
+		}
+
+	}

@@ -72,6 +72,12 @@ class Microtask
     // get the value that corresponds to the given value in microtask
     llvm::Value* get_value_in_main(llvm::Value* val);
 
+    // get end block of loop
+    // this means the omp.dispatch.cond.omp.dispatch.end_crit_edge
+    // not the omp.dispatch.end block fith the call to for_static_fini function
+    //TODO rename function?
+    llvm::BasicBlock* find_loop_end_block();
+
 };
 
 #endif
