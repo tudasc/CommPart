@@ -162,6 +162,10 @@ int signoff_partitions_after_loop_iter(MPIX_Request *request,
 			max_part_num++;
 		}
 
+		// not outside of the boundaries of this operation
+		min_part_num = min_part_num <0? 0:min_part_num;
+		max_part_num = max_part_num > request->partition_count-1? request->partition_count-1:max_part_num;
+
 		// mark all involved partitions ready
 		for (int i = min_part_num; i <= max_part_num; ++i) {
 
@@ -191,7 +195,7 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 			sizeof(long) * (request->partition_count + 1));
 	for (int i = 0; i < request->partition_count; ++i) {
 		partition_adress[i] = (long) request->buf_start
-				+ i * type_extned * request->partition_length_bytes;
+				+ (i * request->partition_length_bytes);
 		size_t needed_bytes = snprintf(NULL, 0, "Start MSG Part %i", i) + 1;
 		msg_partitions[i] = malloc(needed_bytes);
 		sprintf(msg_partitions[i], "Start MSG Part %i", i);
@@ -266,6 +270,14 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 
 long find_valid_partition_size_bytes(long count, long type_extend,
 		long requested_partition_size_bytes) {
+
+	int rank;
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);// only needed to govern debg printing so that only rank 0 prints
+	if (rank == 0)
+		printf(
+				"find_valid Part size: count %ld, type %ld = %ldb,requested %ldb\n",
+				count, type_extend, count * type_extend,
+				requested_partition_size_bytes);
 
 	long requested_partition_size_datamembers = requested_partition_size_bytes
 			/ type_extend;
@@ -348,7 +360,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 	request->A_max = A_max;
 	request->B_max = B_max;
-	request->B_max = A_min;
+	request->A_min = A_min;
 	request->B_min = B_min;
 	request->datatype = datatype;
 
@@ -383,11 +395,12 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 	} else {
 
-		// int division: rounding down is implicit
-		unsigned requested_partition_size_byte = sending_size / access_size;
+		unsigned requested_partition_size_byte = access_size;
 
 		unsigned valid_partition_size_byte = find_valid_partition_size_bytes(
 				count, type_extned, requested_partition_size_byte);
+
+if(rank==0)printf("calculated Partition size: %ldb\n",valid_partition_size_byte);
 
 		unsigned valid_partition_size_datamembers = valid_partition_size_byte
 				/ type_extned;
@@ -395,12 +408,13 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		assert(valid_partition_size_byte % type_extned == 0);
 
 		partitions = count / valid_partition_size_datamembers;
+
 		assert(count % valid_partition_size_datamembers == 0);
 		assert(
 				partitions * valid_partition_size_datamembers * type_extned
 						== sending_size);
 
-		assert(valid_partition_size_byte % sending_size == 0);
+		assert(valid_partition_size_byte * partitions % sending_size == 0);
 		assert(valid_partition_size_byte % type_extned == 0);
 		assert(valid_partition_size_datamembers * partitions == count);
 
