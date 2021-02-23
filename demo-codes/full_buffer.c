@@ -26,7 +26,10 @@ int main(int argc, char **argv) {
 
 	//int pre = (rank == 0) ? -1 : rank - 1;
 	//int nxt = (rank == size - 1) ? -1 : rank + 1;
-	int nxt = size % (rank + 1);
+	int nxt = (rank + 1) % size;
+	int pre = (rank - 1) % size;
+	pre = pre<0?size+pre:pre;// if % is negative: "start counting backwards at size"
+
 
 	//printf("Rank %i in comm with %d and %d\n", rank, pre,nxt);
 
@@ -43,11 +46,19 @@ int main(int argc, char **argv) {
 
 	// communication
 
+	// no deadlock
+	MPI_Request req;
+
+	printf("Rank %d recv from %d send to %d\n",rank,pre,nxt);
+	MPI_Irecv(buffer_r,
+		TOTAL_SIZE, MPI_INT, pre, TAG,
+		MPI_COMM_WORLD, &req);
+
 	MPI_Send(buffer, TOTAL_SIZE, MPI_INT, nxt, TAG,
 	MPI_COMM_WORLD);
-	MPI_Recv(buffer_r,
-	TOTAL_SIZE, MPI_INT, nxt, TAG,
-	MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+	MPI_Wait(&req, MPI_STATUS_IGNORE);
+
 
 	free(buffer);
 	free(buffer_r);
