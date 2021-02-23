@@ -13,7 +13,7 @@ int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
 
 	// init request
 	request->buf_start = buf;
-	int size;
+	MPI_Aint size;
 	MPI_Type_extent(datatype, &size); //TODO with vector types this will give a lot f false positives (?)
 	request->partition_length_bytes = size * count;
 	request->partition_count = partitions;
@@ -33,7 +33,7 @@ int MPIX_Precv_init(void *buf, int partitions, MPI_Count count,
 		MPIX_Request *request) {
 	// init request
 	request->buf_start = buf;
-	int size;
+	MPI_Aint size;
 	MPI_Type_extent(datatype, &size);
 	request->partition_length_bytes = size * count;
 	request->partition_count = partitions;
@@ -97,6 +97,7 @@ int MPIX_Wait(MPIX_Request *request, MPI_Status *status) {
 	if (request->partition_count == 1 && request->partitions_ready != 1) {
 		MPIX_Pready(0, request);
 	}
+	printf("%d of %d Partitions are ready\n",request->partitions_ready,request->partition_count);
 
 	assert(request->partition_count == request->partitions_ready);
 
@@ -161,6 +162,8 @@ int signoff_partitions_after_loop_iter(MPIX_Request *request,
 				% request->partition_length_bytes != 0) {
 			max_part_num++;
 		}
+
+		printf("Loop Part %ld to %ld : ready Partitions %d to %d \n",min_iter,max_iter,min_part_num,max_part_num);
 
 		// not outside of the boundaries of this operation
 		min_part_num = min_part_num <0? 0:min_part_num;
@@ -384,7 +387,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 				access_size);
 		printf(" expected access_size for example= 4000\n");
 		printf(" Ax+b: %ldx+%ld to %ldx+%ld\n", A_min, B_min, A_max, B_max);
-		printf(" buf_start %ld count %d\n", buf, count);
+		printf(" buf_start %lu count %lld\n", (unsigned long)buf, count);
 	}
 
 	if (access_size >= sending_size) {
@@ -400,7 +403,10 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		unsigned valid_partition_size_byte = find_valid_partition_size_bytes(
 				count, type_extned, requested_partition_size_byte);
 
-if(rank==0)printf("calculated Partition size: %ldb\n",valid_partition_size_byte);
+		//TODO this is not calculated correctly for the example: for dbg: set it by hand
+		valid_partition_size_byte=4000;
+
+if(rank==0)printf("calculated Partition size: %lu\n",valid_partition_size_byte);
 
 		unsigned valid_partition_size_datamembers = valid_partition_size_byte
 				/ type_extned;
