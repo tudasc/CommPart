@@ -147,6 +147,11 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 			errs() << "Could not find value for \n";
 			in_parallel->dump();
 		}
+
+		//in_parallel->dump();
+		//errs() << " to:\n";
+		//result->dump();
+		//errs() << "\n";
 		return result;
 	}
 	// if value* is an alloca it will return the value stored there if applicable
@@ -291,11 +296,11 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 				//errs() << " add expr\n";
 				//c->dump();
 
-				int operand = 1;
 				Value *Left_side = getAsInt(
 						get_scev_value_before_parallel_function(
 								c->getOperand(0), insert_before,
 								parallel_region), insert_before);
+				int operand = 1;
 				while (operand < c->getNumOperands()) {
 					Left_side = builder.CreateAdd(Left_side,
 							getAsInt(
@@ -315,6 +320,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 			}
 			if (isa<SCEVMulExpr>(c)) {
 				//errs() << "mul expr\n";
+				//c->dump();
 				assert(c->getNumOperands() > 1);
 
 				int operand = 1;
@@ -323,7 +329,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 								c->getOperand(0), insert_before,
 								parallel_region), insert_before);
 				while (operand < c->getNumOperands()) {
-					builder.CreateMul(Left_side,
+					Left_side= builder.CreateMul(Left_side,
 							getAsInt(
 									get_scev_value_before_parallel_function(
 											c->getOperand(operand),
@@ -756,7 +762,6 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 // arguments for partitioning
 
-
 		Value *A_min = get_scev_value_before_parallel_function(
 				min_adress->getStepRecurrence(*SE), insert_point,
 				parallel_region);
@@ -764,8 +769,13 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		Value *B_min = get_scev_value_before_parallel_function(
 				min_adress->getStart(), insert_point, parallel_region);
 
+//{{((4 * (sext i32 %7 to i64))<nsw> + %buffer)<nsw>,+,(4 * (sext i32 %8 to i64))<nsw>}<%omp.inner.for.cond.preheader>,+,4}<%omp.inner.for.body>
+//{{((4 * (sext i32 %7 to i64))<nsw> + %buffer)<nsw>,+,(4 * (sext i32 %8 to i64))<nsw>}<%omp.inner.for.cond.preheader>,+,4}<%omp.inner.for.body>
+		// min should be equal to max im my example
+
 		Value *A_max = get_scev_value_before_parallel_function(
-				max_adress->getStepRecurrence(*SE), insert_point, parallel_region);
+				max_adress->getStepRecurrence(*SE), insert_point,
+				parallel_region);
 
 		Value *B_max = get_scev_value_before_parallel_function(
 				max_adress->getStart(), insert_point, parallel_region);
@@ -1128,7 +1138,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 //Debug(M.dump(););
 
-		M.print(errs(), nullptr);
+		//M.print(errs(), nullptr);
 
 		mpi_func = get_used_mpi_functions(M);
 		if (!is_mpi_used(mpi_func)) {
@@ -1312,7 +1322,13 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 // if usage == openmp fork call
 // analyze the parallel region to find if partitioning is possible
 
-		M.dump();
+		//M.dump();
+
+		// only need to dump the relevant part
+		M.getFunction("main")->dump();
+		M.getFunction(".omp_outlined.")->dump();
+		//M.getFunction(".omp_outlined._p")->dump();
+
 		bool broken_dbg_info;
 		bool module_errors = verifyModule(M, &errs(), &broken_dbg_info);
 
