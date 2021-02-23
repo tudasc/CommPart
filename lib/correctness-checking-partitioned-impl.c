@@ -14,13 +14,13 @@ int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
 	// init request
 	request->buf_start = buf;
 	int size;
-	MPI_Type_size(datatype, &size);
-	request->partition_length = size * count;
+	MPI_Type_extent(datatype, &size); //TODO with vector types this will give a lot f false positives (?)
+	request->partition_length_bytes = size * count;
 	request->partition_count = partitions;
 	request->partitions_ready = 0;
 	request->is_active = 0;
 	request->valgrind_block_handle = VALGRIND_CREATE_BLOCK(buf,
-			request->partition_length * request->partition_count,
+			request->partition_length_bytes * request->partition_count,
 			SEND_BLOCK_STRING);
 
 	// init MPI
@@ -34,13 +34,13 @@ int MPIX_Precv_init(void *buf, int partitions, MPI_Count count,
 	// init request
 	request->buf_start = buf;
 	int size;
-	MPI_Type_size(datatype, &size);
-	request->partition_length = size * count;
+	MPI_Type_extent(datatype, &size);
+	request->partition_length_bytes = size * count;
 	request->partition_count = partitions;
 	request->partitions_ready = 0;
 	request->is_active = 0;
 	request->valgrind_block_handle = VALGRIND_CREATE_BLOCK(buf,
-			request->partition_length * request->partition_count,
+			request->partition_length_bytes * request->partition_count,
 			RECV_BLOCK_STRING);
 
 	// init MPI
@@ -55,8 +55,8 @@ int MPIX_Pready(int partition, MPIX_Request *request) {
 	// taint partition as modification is forbidden
 	VALGRIND_MAKE_MEM_NOACCESS(
 			((char* )request->buf_start)
-					+ request->partition_length * partition,
-			request->partition_length);
+					+ request->partition_length_bytes * partition,
+			request->partition_length_bytes);
 	// for a send operation reading is actually legal!!
 	// valgrind does not support this fine grained analysis :-(
 	// so we have to filter valgrinds errors based on the block names
@@ -102,7 +102,7 @@ int MPIX_Wait(MPIX_Request *request, MPI_Status *status) {
 
 	// now access is legal again
 	VALGRIND_MAKE_MEM_DEFINED(request->buf_start,
-			request->partition_length * request->partition_count);
+			request->partition_length_bytes * request->partition_count);
 
 	MPI_Start(&request->request);
 	// only start communication now, so that MPI itself does not interfere with
@@ -143,33 +143,37 @@ int signoff_partitions_after_loop_iter(MPIX_Request *request,
 // access= pattern ax+b
 		long min_iter, long max_iter) {
 
-	long min_adress = request->A_min * min_iter + request->B_min;
-	long max_adress = request->A_max * max_iter + request->B_max;
+	// else: do nothing, mark message ready at wait call
+	if (request->partition_count > 1) {
 
-	MPI_Aint type_extned;
-	MPI_Type_extent(request->datatype, &type_extned);
+		long min_adress = request->A_min * min_iter + request->B_min;
+		long max_adress = request->A_max * max_iter + request->B_max;
 
-	//minimum_partition to sign off
-	int min_part_num = (min_adress - (long) request->buf_start)
-			/ request->partition_length;
-	int max_part_num = (max_adress - (long) request->buf_start)
-			/ request->partition_length;
-	if ((max_adress - (long) request->buf_start) % request->partition_length
-			!= 0) {
-		max_part_num++;
-	}
+		MPI_Aint type_extned;
+		MPI_Type_extent(request->datatype, &type_extned);
 
-	// mark all involved partitions ready
-	for (int i = min_part_num; i <= max_part_num; ++i) {
+		//minimum_partition to sign off
+		int min_part_num = (min_adress - (long) request->buf_start)
+				/ request->partition_length_bytes;
+		int max_part_num = (max_adress - (long) request->buf_start)
+				/ request->partition_length_bytes;
+		if ((max_adress - (long) request->buf_start)
+				% request->partition_length_bytes != 0) {
+			max_part_num++;
+		}
 
-		int new_val;
+		// mark all involved partitions ready
+		for (int i = min_part_num; i <= max_part_num; ++i) {
+
+			int new_val;
 // atomic add and fetch
 #pragma omp atomic capture
-		new_val = ++request->local_overlap[i];
+			new_val = ++request->local_overlap[i];
 
-		if (new_val == request->local_overlap_count[i]) {
-			// other threads have also signed off
-			MPIX_Pready(i, request);
+			if (new_val == request->local_overlap_count[i]) {
+				// other threads have also signed off
+				MPIX_Pready(i, request);
+			}
 		}
 	}
 
@@ -187,40 +191,44 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 			sizeof(long) * (request->partition_count + 1));
 	for (int i = 0; i < request->partition_count; ++i) {
 		partition_adress[i] = (long) request->buf_start
-				+ i * type_extned * request->partition_length;
-		size_t needed_bytes = snprintf(NULL, 0, "Start MSG Part %i\n", i) + 1;
+				+ i * type_extned * request->partition_length_bytes;
+		size_t needed_bytes = snprintf(NULL, 0, "Start MSG Part %i", i) + 1;
 		msg_partitions[i] = malloc(needed_bytes);
-		sprintf(msg_partitions[i], "Start MSG Part %i\n", i);
+		sprintf(msg_partitions[i], "Start MSG Part %i", i);
 	}
+
 	partition_adress[request->partition_count] = (long) request->buf_start
-			+ request->partition_count * type_extned
-					* request->partition_length;
+			+ request->partition_count * request->partition_length_bytes;
 	size_t needed_bytes = snprintf(NULL, 0, "End of Message") + 1;
 	msg_partitions[request->partition_count] = malloc(needed_bytes);
 	sprintf(msg_partitions[request->partition_count], "End of Message");
-	int chunks = (loop_max - loop_min) / chunk_size;
+	int chunks = (loop_max - loop_min + 1) / chunk_size;
 	char **msg_chunks_begin = malloc(sizeof(char*) * chunks);
 	long *chunk_adress_begin = malloc(sizeof(long) * chunks);
 	char **msg_chunks_end = malloc(sizeof(char*) * chunks);
 	long *chunk_adress_end = malloc(sizeof(long) * chunks);
+
 	for (int i = 0; i < chunks; ++i) {
-		long min_chunk_iter = loop_min + i * chunk_size;
-		long max_chunk_iter = loop_min + i * (chunk_size + 1);
+		long min_chunk_iter = loop_min + (i * chunk_size);
+		long max_chunk_iter = loop_min + ((i + 1) * chunk_size);
 		// not outside loop bounds
-		min_chunk_iter = min_chunk_iter < loop_min ? loop_min : min_chunk_iter;
-		max_chunk_iter = max_chunk_iter < loop_max ? loop_max : max_chunk_iter;
+		assert(min_chunk_iter >= loop_min);	// otherwise makes no sense
+		//min_chunk_iter = min_chunk_iter <loop_min ? loop_min : min_chunk_iter;
+		max_chunk_iter = max_chunk_iter > loop_max ? loop_max : max_chunk_iter;
 		chunk_adress_begin[i] = A_min * min_chunk_iter + B_min;
 		chunk_adress_end[i] = A_max * max_chunk_iter + B_max;
-		size_t needed_bytes = snprintf(NULL, 0, "Start Loop Chunk %i\n", i) + 1;
+		size_t needed_bytes = snprintf(NULL, 0, "Start Loop Chunk %i", i) + 1;
 		msg_chunks_begin[i] = malloc(needed_bytes);
-		sprintf(msg_chunks_begin[i], "Start Loop Chunk %i\n", i);
-		needed_bytes = snprintf(NULL, 0, "End Loop Chunk %i\n", i) + 1;
+		sprintf(msg_chunks_begin[i], "Start Loop Chunk %i", i);
+		needed_bytes = snprintf(NULL, 0, "End Loop Chunk %i", i) + 1;
 		msg_chunks_end[i] = malloc(needed_bytes);
-		sprintf(msg_chunks_end[i], "End Loop Chunk %i\n", i);
+		sprintf(msg_chunks_end[i], "End Loop Chunk %i", i);
 	}
 	int current_chunk_begin = 0;
 	int current_chunk_end = 0;
 	int current_partition = 0;
+	long base_adress = (long) request->buf_start;
+
 	while (current_chunk_begin < chunks || current_chunk_end < chunks
 			|| current_partition <= request->partition_count) {
 		long curr_chunk_add_begin =
@@ -235,16 +243,20 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 		// lowest
 		if (curr_chunk_add_begin < curr_chunk_add_end
 				&& curr_chunk_add_begin < curr_P) {
-			printf("0x%.8lX: %s", chunk_adress_begin[current_chunk_begin],
-					msg_chunks_begin[current_chunk_begin]);
+			printf("0x%.8lX: %s (%ld)\n",
+					chunk_adress_begin[current_chunk_begin],
+					msg_chunks_begin[current_chunk_begin],
+					chunk_adress_begin[current_chunk_begin] - base_adress);
 			current_chunk_begin++;
 		} else if (curr_chunk_add_end < curr_P) {
-			printf("0x%.8lX: %s", chunk_adress_end[current_chunk_end],
-					msg_chunks_end[current_chunk_end]);
+			printf("0x%.8lX: %s (%ld)\n", chunk_adress_end[current_chunk_end],
+					msg_chunks_end[current_chunk_end],
+					chunk_adress_end[current_chunk_end] - base_adress);
 			current_chunk_end++;
 		} else {
-			printf("0x%.8lX: %s", partition_adress[current_partition],
-					msg_partitions[current_partition]);
+			printf("0x%.8lX: %s (%ld)\n", partition_adress[current_partition],
+					msg_partitions[current_partition],
+					partition_adress[current_partition] - base_adress);
 			current_partition++;
 		}
 	}
@@ -311,6 +323,12 @@ long find_valid_partition_size_bytes(long count, long type_extend,
 
 }
 
+//%partitions = call i32 @partition_sending_op(i8* %call3, i64 4000, i32 1275069445, i32 %rem, i32 42, i32 1140850688,
+//%struct.MPIX_Request* %mpix_request,
+//i64 4, i64 %5, i64 %7, i64 %9,
+//i64 1000, i64 0, i64 3999)
+
+// loop size is inclusive!
 int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		int dest, int tag, MPI_Comm comm, MPIX_Request *request,
 		// loop info
@@ -320,7 +338,8 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 	int partitions = 1;
 
-	printf("Try to partition this sending operation\n");
+	int rank;
+	MPI_Comm_rank(comm, &rank);	// only needed to govern debg printing so that only rank 0 prints
 
 //#pragma omp single
 	//{
@@ -342,8 +361,19 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 	long sending_size = type_extned * count;
 
-	long access_size = A_max * (loop_min + chunk_size) + B_max
-			+ -A_min * loop_min + B_min;
+	long access_size = (A_max * (loop_min + chunk_size) + B_max)
+			- ((A_min * loop_min) + B_min);
+
+	if (rank == 0) {
+		printf("Try to partition this sending operation\n");
+		printf(" loop size: %ld-%ld chunk:%ld\n", loop_min, loop_max,
+				chunk_size);
+		printf(" sending size: %ld access_size:%ld\n", sending_size,
+				access_size);
+		printf(" expected access_size for example= 4000\n");
+		printf(" Ax+b: %ldx+%ld to %ldx+%ld\n", A_min, B_min, A_max, B_max);
+		printf(" buf_start %ld count %d\n", buf, count);
+	}
 
 	if (access_size >= sending_size) {
 		// no partitioning useful
@@ -412,9 +442,9 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 		for (int i = 0; i < partitions; ++i) {
 			long partition_min = (long) buf
-					+ (request->partition_length * type_extned) * i;
+					+ (request->partition_length_bytes * type_extned) * i;
 			long partition_max = partition_min
-					+ request->partition_length * type_extned;
+					+ request->partition_length_bytes * type_extned;
 
 			long min_loop_iter = (partition_min - B_min) / A_min;
 			long max_loop_iter = (partition_max - B_max) / A_max;
@@ -435,8 +465,6 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		}
 
 		//DEBUG PRINTING
-		int rank;
-		MPI_Comm_rank(comm, &rank);
 		if (rank == 0) {
 			debug_printing(type_extned, loop_max, loop_min, chunk_size, A_min,
 					B_min, A_max, B_max, request);

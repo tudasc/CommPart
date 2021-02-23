@@ -10,7 +10,7 @@
 typedef struct {
   MPI_Request request;
   void *buf_start;
-  int partition_length;
+  int partition_length_bytes;
   int partition_count;
   int partitions_ready;
   int is_active;
