@@ -323,8 +323,7 @@ Function* duplicate_parallel_function_with_added_request(
 void add_partition_signoff_call(ValueToValueMapTy &VMap,
 		Microtask *parallel_region, Function *new_parallel_function) {
 	// need to add a call to signoff_partitions after a loop iteration has finished
-	Instruction *original_finish = parallel_region->get_parallel_for()->fini;
-	Instruction *new_finish = cast<Instruction>(VMap[original_finish]);
+
 	// all of this analysis happens in old version of the function!
 	auto *loop_end_block = parallel_region->find_loop_end_block();
 	// this block must contain a store to lower bound and upper bound
@@ -549,12 +548,6 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 	assert(min_adress->isAffine() && max_adress->isAffine());
 
 	//TOOD for a static schedule, there should be a better way of getting the chunk_size!
-
-	auto *LI = analysis_results->getLoopInfo(parallel_region->get_function());
-
-	auto *preheader =
-			parallel_region->get_parallel_for()->init->getParent()->getNextNode();
-	auto *loop = LI->getLoopFor(preheader->getNextNode());
 
 	errs() << "detected possible partitioning for MPI send Operation\n";
 
