@@ -297,15 +297,15 @@ long find_valid_partition_size_bytes(long count, long type_extend,
 		++requested_partition_size_datamembers;
 	}
 
-	long sending_size = count * type_extend;
+	long sending_size_byte = count * type_extend;
 
-	if (requested_partition_size_bytes > sending_size) {
-		return sending_size;
+	if (requested_partition_size_bytes > sending_size_byte) {
+		return sending_size_byte;
 	}
 
-	int partition_size_canidate = count / requested_partition_size_datamembers;
+	int partition_size_canidate = requested_partition_size_datamembers;
 
-	if (count % requested_partition_size_datamembers == 0) {
+	if (count % partition_size_canidate == 0) {
 		return partition_size_canidate * type_extend;
 	}
 
@@ -341,7 +341,7 @@ long find_valid_partition_size_bytes(long count, long type_extend,
 		printf(
 				"Was not able to calculate a good partition in %d Iterations: will not partiton this operation\n ",
 				MAXIMUM_ITERATIONS);
-		return sending_size;
+		return sending_size_byte;
 	}
 
 }
@@ -411,10 +411,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		unsigned valid_partition_size_byte = find_valid_partition_size_bytes(
 				count, type_extned, requested_partition_size_byte);
 
-		//TODO this is not calculated correctly for the example: for dbg: set it by hand
-		valid_partition_size_byte=4000;
-
-if(rank==0)printf("calculated Partition size: %u\n",valid_partition_size_byte);
+if(rank==0)printf("calculated Partition size: %ub\n",valid_partition_size_byte);
 
 		unsigned valid_partition_size_datamembers = valid_partition_size_byte
 				/ type_extned;
