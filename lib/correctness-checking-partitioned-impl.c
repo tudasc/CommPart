@@ -159,8 +159,9 @@ int signoff_partitions_after_loop_iter(MPIX_Request *request,
 		int max_part_num = (max_adress - (long) request->buf_start)
 				/ request->partition_length_bytes;
 		if ((max_adress - (long) request->buf_start)
-				% request->partition_length_bytes != 0) {
-			max_part_num++;
+				% request->partition_length_bytes == 0) {
+			// Partition boundary itself belongs to the next partition
+			--max_part_num;
 		}
 
 		printf("Loop Part %ld to %ld : ready Partitions %d to %d \n",min_iter,max_iter,min_part_num,max_part_num);
@@ -469,23 +470,27 @@ if(rank==0)printf("calculated Partition size: %u\n",valid_partition_size_byte);
 
 		for (int i = 0; i < partitions; ++i) {
 			long partition_min = (long) buf
-					+ (request->partition_length_bytes * type_extned) * i;
+					+ (request->partition_length_bytes * i);
 			long partition_max = partition_min
-					+ request->partition_length_bytes * type_extned;
+					+ request->partition_length_bytes -1;
+			// boundary is exclusive
 
+
+			// mem access = Ax+b ==> x = (mem-b)/A
 			long min_loop_iter = (partition_min - B_min) / A_min;
 			long max_loop_iter = (partition_max - B_max) / A_max;
+			//TODO what if (mem-b)%A != 0 ?? is rounding down ok?
 
 			// not outside loop bounds
 			min_loop_iter = min_loop_iter < loop_min ? loop_min : min_loop_iter;
-			max_loop_iter = max_loop_iter < loop_max ? loop_max : max_loop_iter;
+			max_loop_iter = max_loop_iter > loop_max ? loop_max : max_loop_iter;
+
+			//if (rank==0) printf("Partition %i from loop iter %li to %li\n",i,min_loop_iter,max_loop_iter);
 
 			long min_chunk = (min_loop_iter - loop_min) / chunk_size;
 			long max_chunk = (max_loop_iter - loop_min) / chunk_size;
-			//if partly in next chunk
-			if ((max_loop_iter - loop_min) % chunk_size != 0) {
-				max_chunk++;
-			}
+			// rounding down integer division is desired here
+			//if (rank==0) printf("Partition %i from chunk %li to %li\n",i,min_chunk,max_chunk);
 			// +1 as both numbers are inclusive
 			request->local_overlap_count[i] = max_chunk - min_chunk + 1;
 
