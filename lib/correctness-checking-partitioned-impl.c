@@ -267,6 +267,13 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 			current_partition++;
 		}
 	}
+
+	printf("\n");
+	printf("Partitions overlap_count:\n");
+	for (int i = 0; i < request->partition_count; ++i) {
+		printf("Partition %i : %i overlaps\n",i,request->local_overlap_count[i]);
+
+	}
 }
 
 #define MAXIMUM_ITERATIONS 10
@@ -406,7 +413,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		//TODO this is not calculated correctly for the example: for dbg: set it by hand
 		valid_partition_size_byte=4000;
 
-if(rank==0)printf("calculated Partition size: %lu\n",valid_partition_size_byte);
+if(rank==0)printf("calculated Partition size: %u\n",valid_partition_size_byte);
 
 		unsigned valid_partition_size_datamembers = valid_partition_size_byte
 				/ type_extned;
