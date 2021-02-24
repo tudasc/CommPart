@@ -131,7 +131,7 @@ Value* getCastedToCorrectType(Value *v, Type *t, Instruction *insert_before) {
 				assert(false && "Should not reach this");
 				return nullptr;
 			}
-		}else{
+		} else {
 			assert(false && "Should not reach this");
 			return nullptr;
 		}
@@ -356,6 +356,27 @@ void add_partition_signoff_call(ValueToValueMapTy &VMap,
 	assert(omp_lb != nullptr && omp_ub != nullptr);
 	assert(omp_lb->getParent() == omp_ub->getParent());
 	assert(loop_end_block->getPrevNode() == omp_lb->getParent());
+
+	// we want the old lower bound of the passed iteration, not the new one for the next iter
+	Instruction *add_lb = cast<Instruction>(omp_lb);
+	assert(add_lb->getOpcode() == Instruction::Add);
+	omp_lb = cast<Instruction>(add_lb->getOperand(1));
+	//TODO assert that the other operand of add is the value of %omp_stride ?
+
+	// same for the upper bound but need to handle the select instr first
+	auto *select_inst = cast<SelectInst>(omp_ub);
+	omp_ub = cast<Instruction>(select_inst->getTrueValue());
+	Instruction *add_ub = cast<Instruction>(omp_ub);
+	assert(add_ub->getOpcode() == Instruction::Add);
+	omp_ub = cast<Instruction>(add_ub->getOperand(1));
+
+	//TODO assert that the other operand of add is the value of %omp_stride ?
+	assert(add_ub->getOperand(0) == add_lb->getOperand(0)); // at least the stride must be equal
+
+	// insert point is at the end of a loop chunk
+	Instruction* original_insert_point=add_lb->getParent()->getTerminator();
+	//if we add att the location of omp_lb or omp_ub this would be at the beginning
+
 	// now transition to the copy of parallel func including the request parameter:
 	omp_lb = cast<Instruction>(VMap[omp_lb]);
 	omp_ub = cast<Instruction>(VMap[omp_ub]);
@@ -366,7 +387,7 @@ void add_partition_signoff_call(ValueToValueMapTy &VMap,
 	//assert(loop_end_block->getPrevNode() == omp_lb->getParent());
 	// if we want to test this assertion we need to first get the loop_end_block in the copy
 	// insert before final instruction of this block
-	Instruction *insert_point_in_copy = omp_lb->getParent()->getTerminator();
+	Instruction *insert_point_in_copy = cast<Instruction>(VMap[original_insert_point]);
 	IRBuilder<> builder_in_copy(insert_point_in_copy);
 	//TODO is there a different insert point for dynamic scheduled loops?
 	// it is the last argument
@@ -479,28 +500,29 @@ void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 			"partitions");
 }
 
-void replace_old_send_with_wait(CallInst* send_call,Value* request_ptr){
+void replace_old_send_with_wait(CallInst *send_call, Value *request_ptr) {
 	// now we need to replace the send call with the wait
-		IRBuilder<> builder(send_call);
+	IRBuilder<> builder(send_call);
 
-		//TODO set status ignore instead?
+	//TODO set status ignore instead?
 
-		Type *MPI_status_ptr_type =
-				mpi_func->mpix_Wait->getFunctionType()->getParamType(1);
+	Type *MPI_status_ptr_type =
+			mpi_func->mpix_Wait->getFunctionType()->getParamType(1);
 
-		Value *status_ptr = builder.CreateAlloca(
-				MPI_status_ptr_type->getPointerElementType(), 0, "mpi_status");
+	Value *status_ptr = builder.CreateAlloca(
+			MPI_status_ptr_type->getPointerElementType(), 0, "mpi_status");
 
-		Value *new_send_call = builder.CreateCall(mpi_func->mpix_Wait, {
-				request_ptr, status_ptr });
+	Value *new_send_call = builder.CreateCall(mpi_func->mpix_Wait, {
+			request_ptr, status_ptr });
 
-		// and remove the old send call
-		send_call->replaceAllUsesWith(new_send_call);
-		send_call->eraseFromParent();
+	// and remove the old send call
+	send_call->replaceAllUsesWith(new_send_call);
+	send_call->eraseFromParent();
 }
 
 CallInst* insert_new_fork_call(Instruction *insert_point,
-		Microtask *parallel_region, Function *new_parallel_function, Value* request_ptr) {
+		Microtask *parallel_region, Function *new_parallel_function,
+		Value *request_ptr) {
 	// fork_call
 	//call void (%struct.ident_t*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%struct.ident_t* nonnull @2, i32 2, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, i32*, i32*)* @.omp_outlined. to void (i32*, i32*, ...)*), i8* %call3, i32* nonnull %rank)
 	// change the call to the new ompoutlined
@@ -539,8 +561,7 @@ CallInst* insert_new_fork_call(Instruction *insert_point,
 	new_args.push_back(request_ptr);
 
 	errs() << "insert new fork call\n";
-	return builder.CreateCall(original_fork_call->getCalledFunction(),
-			new_args);
+	return builder.CreateCall(original_fork_call->getCalledFunction(), new_args);
 }
 
 // only call if the replacement is actually safe
@@ -581,10 +602,10 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 	builder.CreateCall(mpi_func->mpix_Start, { request_ptr });
 
 	auto *new_fork_call = insert_new_fork_call(insert_point, parallel_region,
-			new_parallel_function,request_ptr);
+			new_parallel_function, request_ptr);
 
 	Function *old_ompoutlined = parallel_region->get_function();
-	CallInst* original_fork_call = parallel_region->get_fork_call();
+	CallInst *original_fork_call = parallel_region->get_fork_call();
 	// remove old call
 	original_fork_call->replaceAllUsesWith(new_fork_call);// unnecessary as it is c void return anyway
 	original_fork_call->eraseFromParent();
@@ -600,7 +621,7 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 
 	//TODO do we need to invalidate the microtask obj now?
 
-	replace_old_send_with_wait(send_call,request_ptr);
+	replace_old_send_with_wait(send_call, request_ptr);
 
 	return true;
 }
