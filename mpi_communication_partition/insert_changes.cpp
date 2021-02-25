@@ -17,6 +17,7 @@
 #include "insert_changes.h"
 #include "Openmp_region.h"
 #include "debug.h"
+#include "helper.h"
 #include "analysis_results.h"
 #include "mpi_functions.h"
 
@@ -33,6 +34,7 @@ using namespace llvm;
 
 Value* get_value_in_serial_part_impl(Value *in_parallel,
 		Microtask *parallel_region);
+
 //wrapper for debugging:
 Value* get_value_in_serial_part(Value *in_parallel,
 		Microtask *parallel_region) {
@@ -49,6 +51,82 @@ Value* get_value_in_serial_part(Value *in_parallel,
 	//errs() << "\n";
 	return result;
 }
+
+// we will add the corresponding add or sub after the last instruction in serial
+// Openmp will sub 1 from loop bound as the openmp function expect loop bound as inclusive
+Value* get_instruction_in_serial_part(Instruction *in_parallel,
+		Microtask *parallel_region) {
+	// only sub or add is allowed
+
+	bool is_allowed = false;
+
+	// unary
+	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::SExt);
+	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::ZExt);
+
+	// binary
+	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Add);
+	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Sub);
+	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Mul);
+
+	//TODO add more allowed instructions if needed
+	// only control-flow instructions such as branches are forbidden
+
+	if (!is_allowed) {
+		return nullptr;
+	}
+
+	// find all operands in serial
+	std::vector<Value*> operands_in_serial;
+	operands_in_serial.reserve(in_parallel->getNumOperands());
+
+	std::transform(in_parallel->op_begin(), in_parallel->op_end(),
+			std::back_inserter(operands_in_serial),
+			[parallel_region](Value *v) {
+				return get_value_in_serial_part(v, parallel_region);
+			});
+
+	// found all operands in serial?
+	if (std::all_of(operands_in_serial.begin(), operands_in_serial.end(),
+			[](auto *v) {
+				return v != nullptr;
+			})) {
+		return nullptr;
+	}
+
+	// find insertion point
+	std::vector<Instruction*> operands_in_serial_as_instructions;
+	operands_in_serial_as_instructions.reserve(operands_in_serial.size());
+
+	std::transform(operands_in_serial.begin(), operands_in_serial.end(),
+			std::back_inserter(operands_in_serial_as_instructions),
+			[](Value *v) {
+				return dyn_cast<Instruction>(v);
+			});
+
+	// remove all nullptrs
+	operands_in_serial_as_instructions.erase(
+			std::remove_if(operands_in_serial_as_instructions.begin(),
+					operands_in_serial_as_instructions.end(), [](auto *v) {
+						return v != nullptr;
+					}),operands_in_serial_as_instructions.end());
+
+	Instruction *insert_point = get_last_instruction(
+			operands_in_serial_as_instructions);
+
+	if (insert_point == nullptr) {
+		// if unknown: use the fork call
+		insert_point = parallel_region->get_fork_call();
+	}
+
+	IRBuilder<> builder(insert_point);
+
+	return builder.CreateNAryOp(in_parallel->getOpcode(), operands_in_serial,
+			in_parallel->getName());
+
+	return nullptr;
+}
+
 // if value* is an alloca it will return the value stored there if applicable
 Value* get_value_in_serial_part_impl(Value *in_parallel,
 		Microtask *parallel_region) {
@@ -88,7 +166,6 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 	}
 	if (auto *ptr_arg = dyn_cast<AllocaInst>(in_parallel)) {
 
-		errs() << "Try to find alloca value\n";
 		// e.g. the values set by the for_init call
 
 		// as we want the value outside of the omp parallel we just need to get the first value stored
@@ -96,7 +173,6 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 		Instruction *next_inst = ptr_arg->getNextNode();
 
 		while (next_inst != nullptr) {
-			next_inst->dump();
 			if (auto *s = dyn_cast<StoreInst>(next_inst)) {
 				if (s->getPointerOperand() == ptr_arg) {
 					// found matching store
@@ -117,6 +193,10 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 		}
 		//TODO is there any other way a variable is set besides store?
 
+	}
+	// also allowed: add or sub with values known in serial
+	if (auto *inst = dyn_cast<Instruction>(in_parallel)) {
+		return get_instruction_in_serial_part(inst, parallel_region);
 	}
 
 	errs() << "Error finding the vlaue in main:\n";
