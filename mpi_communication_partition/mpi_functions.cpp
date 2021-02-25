@@ -117,27 +117,33 @@ struct mpi_functions* get_used_mpi_functions(llvm::Module &M) {
 			result->unimportant_functions.insert(f);
 
 			//self implemented Partitioned functions
-		} else if (f->getName().equals("MPIX_Psend_init")) {
+			// search for either the normal name (C mode) or the mangled name (C++ mode)
+		} else if (f->getName().equals("MPIX_Psend_init")|| f->getName().equals("_Z15MPIX_Psend_initPvixiiiiiP12MPIX_Request")) {
 			result->mpix_Psend_init = f;
-		} else if (f->getName().equals("MPIX_Precv_init")) {
+		} else if (f->getName().equals("MPIX_Precv_init")|| f->getName().equals("_Z15MPIX_Precv_initPvixiiiiiP12MPIX_Request")) {
 			result->mpix_Precv_init = f;
-		} else if (f->getName().equals("MPIX_Start")) {
+		} else if (f->getName().equals("MPIX_Start")|| f->getName().equals("_Z10MPIX_StartP12MPIX_Request")) {
 			result->mpix_Start = f;
-		} else if (f->getName().equals("MPIX_Wait")) {
+		} else if (f->getName().equals("MPIX_Wait")|| f->getName().equals("_Z9MPIX_WaitP12MPIX_RequestP10MPI_Status")) {
 			result->mpix_Wait = f;
 
-		} else if (f->getName().equals("MPIX_Pready")) {
+		} else if (f->getName().equals("MPIX_Pready")|| f->getName().equals("_Z11MPIX_PreadyiP12MPIX_Request")) {
 			result->mpix_Pready = f;
-		} else if (f->getName().equals("MPIX_Pready_range")) {
+		} else if (f->getName().equals("MPIX_Pready_range")|| f->getName().equals("_Z17MPIX_Pready_rangeiiP12MPIX_Request")) {
 			result->mpix_Pready_range = f;
-		} else if (f->getName().equals("MPIX_Request_free")) {
+		} else if (f->getName().equals("MPIX_Request_free")
+				|| f->getName().equals("_Z17MPIX_Request_freeP12MPIX_Request")) {
 			result->mpix_Request_free = f;
 
 			// library funcs to handle the partitioning
-		} else if (f->getName().equals("partition_sending_op")) {
+		} else if (f->getName().equals("partition_sending_op")
+				|| f->getName().equals(
+						"_Z20partition_sending_opPvxiiiiP12MPIX_Requestlllllll")) {
 			result->partition_sending_op = f;
 
-		} else if (f->getName().equals("signoff_partitions_after_loop_iter")) {
+		} else if (f->getName().equals("signoff_partitions_after_loop_iter")
+				|| f->getName().equals(
+						"_Z34signoff_partitions_after_loop_iterP12MPIX_Requestll")) {
 			result->signoff_partitions_after_loop_iter = f;
 		}
 	}
@@ -149,9 +155,13 @@ struct mpi_functions* get_used_mpi_functions(llvm::Module &M) {
 			&& (result->mpix_Pready != nullptr)
 			&& (result->mpix_Pready_range != nullptr)
 			&& (result->mpix_Request_free != nullptr);
-	assert(result->partition_sending_op!=nullptr && result->signoff_partitions_after_loop_iter!=nullptr);
+	assert(
+			result->partition_sending_op != nullptr
+					&& result->signoff_partitions_after_loop_iter != nullptr);
 
-	assert (all_present && "Could not find all operations for Partitioned communication to be defined");
+	assert(
+			all_present
+					&& "Could not find all operations for Partitioned communication to be defined");
 
 	// get type of mpix request for allocation of needed requests
 	PointerType *pointer_t = dyn_cast<PointerType>(
