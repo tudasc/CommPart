@@ -374,7 +374,7 @@ void add_partition_signoff_call(ValueToValueMapTy &VMap,
 	assert(add_ub->getOperand(0) == add_lb->getOperand(0)); // at least the stride must be equal
 
 	// insert point is at the end of a loop chunk
-	Instruction* original_insert_point=add_lb->getParent()->getTerminator();
+	Instruction *original_insert_point = add_lb->getParent()->getTerminator();
 	//if we add att the location of omp_lb or omp_ub this would be at the beginning
 
 	// now transition to the copy of parallel func including the request parameter:
@@ -387,7 +387,8 @@ void add_partition_signoff_call(ValueToValueMapTy &VMap,
 	//assert(loop_end_block->getPrevNode() == omp_lb->getParent());
 	// if we want to test this assertion we need to first get the loop_end_block in the copy
 	// insert before final instruction of this block
-	Instruction *insert_point_in_copy = cast<Instruction>(VMap[original_insert_point]);
+	Instruction *insert_point_in_copy = cast<Instruction>(
+			VMap[original_insert_point]);
 	IRBuilder<> builder_in_copy(insert_point_in_copy);
 	//TODO is there a different insert point for dynamic scheduled loops?
 	// it is the last argument
@@ -500,7 +501,7 @@ void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 			"partitions");
 }
 
-void replace_old_send_with_wait(CallInst *send_call, Value *request_ptr) {
+CallInst* replace_old_send_with_wait(CallInst *send_call, Value *request_ptr) {
 	// now we need to replace the send call with the wait
 	IRBuilder<> builder(send_call);
 
@@ -518,6 +519,16 @@ void replace_old_send_with_wait(CallInst *send_call, Value *request_ptr) {
 	// and remove the old send call
 	send_call->replaceAllUsesWith(new_send_call);
 	send_call->eraseFromParent();
+
+	return cast<CallInst>(new_send_call);
+}
+
+CallInst* insert_request_free(Instruction *insert_before, Value *request_ptr) {
+
+	IRBuilder<> builder(insert_before);
+	return cast<CallInst>(builder.CreateCall(mpi_func->mpix_Request_free, {
+			request_ptr }));
+
 }
 
 CallInst* insert_new_fork_call(Instruction *insert_point,
@@ -621,7 +632,9 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 
 	//TODO do we need to invalidate the microtask obj now?
 
-	replace_old_send_with_wait(send_call, request_ptr);
+	auto *wait_call = replace_old_send_with_wait(send_call, request_ptr);
+
+	insert_request_free(wait_call->getNextNode(), request_ptr);
 
 	return true;
 }
