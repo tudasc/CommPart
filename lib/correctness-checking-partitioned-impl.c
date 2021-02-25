@@ -97,7 +97,8 @@ int MPIX_Wait(MPIX_Request *request, MPI_Status *status) {
 	if (request->partition_count == 1 && request->partitions_ready != 1) {
 		MPIX_Pready(0, request);
 	}
-	printf("%d of %d Partitions are ready\n",request->partitions_ready,request->partition_count);
+	printf("%d of %d Partitions are ready\n", request->partitions_ready,
+			request->partition_count);
 
 	assert(request->partition_count == request->partitions_ready);
 
@@ -164,11 +165,14 @@ int signoff_partitions_after_loop_iter(MPIX_Request *request,
 			--max_part_num;
 		}
 
-		printf("Loop Part %ld to %ld : ready Partitions %d to %d \n",min_iter,max_iter,min_part_num,max_part_num);
+		printf("Loop Part %ld to %ld : ready Partitions %d to %d \n", min_iter,
+				max_iter, min_part_num, max_part_num);
 
 		// not outside of the boundaries of this operation
-		min_part_num = min_part_num <0? 0:min_part_num;
-		max_part_num = max_part_num > request->partition_count-1? request->partition_count-1:max_part_num;
+		min_part_num = min_part_num < 0 ? 0 : min_part_num;
+		max_part_num =
+				max_part_num > request->partition_count - 1 ?
+						request->partition_count - 1 : max_part_num;
 
 		// mark all involved partitions ready
 		for (int i = min_part_num; i <= max_part_num; ++i) {
@@ -193,28 +197,28 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 		MPIX_Request *request) {
 	//DEBUG PRINTING
 	printf("Memory Layout for partitioned Operation:\n");
-	char **msg_partitions = malloc(
+	char **msg_partitions = (char**) malloc(
 			sizeof(char*) * (request->partition_count + 1));
-	long *partition_adress = malloc(
+	long *partition_adress = (long*) malloc(
 			sizeof(long) * (request->partition_count + 1));
 	for (int i = 0; i < request->partition_count; ++i) {
 		partition_adress[i] = (long) request->buf_start
 				+ (i * request->partition_length_bytes);
 		size_t needed_bytes = snprintf(NULL, 0, "Start MSG Part %i", i) + 1;
-		msg_partitions[i] = malloc(needed_bytes);
+		msg_partitions[i] = (char*) malloc(needed_bytes);
 		sprintf(msg_partitions[i], "Start MSG Part %i", i);
 	}
 
 	partition_adress[request->partition_count] = (long) request->buf_start
 			+ request->partition_count * request->partition_length_bytes;
 	size_t needed_bytes = snprintf(NULL, 0, "End of Message") + 1;
-	msg_partitions[request->partition_count] = malloc(needed_bytes);
+	msg_partitions[request->partition_count] = (char*) malloc(needed_bytes);
 	sprintf(msg_partitions[request->partition_count], "End of Message");
 	int chunks = (loop_max - loop_min + 1) / chunk_size;
-	char **msg_chunks_begin = malloc(sizeof(char*) * chunks);
-	long *chunk_adress_begin = malloc(sizeof(long) * chunks);
-	char **msg_chunks_end = malloc(sizeof(char*) * chunks);
-	long *chunk_adress_end = malloc(sizeof(long) * chunks);
+	char **msg_chunks_begin = (char**) malloc(sizeof(char*) * chunks);
+	long *chunk_adress_begin = (long*) malloc(sizeof(long) * chunks);
+	char **msg_chunks_end = (char**) malloc(sizeof(char*) * chunks);
+	long *chunk_adress_end = (long*) malloc(sizeof(long) * chunks);
 
 	for (int i = 0; i < chunks; ++i) {
 		long min_chunk_iter = loop_min + (i * chunk_size);
@@ -226,10 +230,10 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 		chunk_adress_begin[i] = A_min * min_chunk_iter + B_min;
 		chunk_adress_end[i] = A_max * max_chunk_iter + B_max;
 		size_t needed_bytes = snprintf(NULL, 0, "Start Loop Chunk %i", i) + 1;
-		msg_chunks_begin[i] = malloc(needed_bytes);
+		msg_chunks_begin[i] =(char*) malloc(needed_bytes);
 		sprintf(msg_chunks_begin[i], "Start Loop Chunk %i", i);
 		needed_bytes = snprintf(NULL, 0, "End Loop Chunk %i", i) + 1;
-		msg_chunks_end[i] = malloc(needed_bytes);
+		msg_chunks_end[i] = (char*)malloc(needed_bytes);
 		sprintf(msg_chunks_end[i], "End Loop Chunk %i", i);
 	}
 	int current_chunk_begin = 0;
@@ -282,7 +286,8 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 	printf("\n");
 	printf("Partitions overlap_count:\n");
 	for (int i = 0; i < request->partition_count; ++i) {
-		printf("Partition %i : %i overlaps\n",i,request->local_overlap_count[i]);
+		printf("Partition %i : %i overlaps\n", i,
+				request->local_overlap_count[i]);
 
 	}
 }
@@ -405,7 +410,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 				access_size);
 		printf(" expected access_size for example= 4000\n");
 		printf(" Ax+b: %ldx+%ld to %ldx+%ld\n", A_min, B_min, A_max, B_max);
-		printf(" buf_start %lu count %lld\n", (unsigned long)buf, count);
+		printf(" buf_start %lu count %lld\n", (unsigned long) buf, count);
 	}
 
 	if (access_size >= sending_size) {
@@ -421,7 +426,9 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		unsigned valid_partition_size_byte = find_valid_partition_size_bytes(
 				count, type_extned, requested_partition_size_byte);
 
-if(rank==0)printf("calculated Partition size: %ub\n",valid_partition_size_byte);
+		if (rank == 0)
+			printf("calculated Partition size: %ub\n",
+					valid_partition_size_byte);
 
 		unsigned valid_partition_size_datamembers = valid_partition_size_byte
 				/ type_extned;
@@ -472,16 +479,15 @@ if(rank==0)printf("calculated Partition size: %ub\n",valid_partition_size_byte);
 		//TODO is there a better way than calculating it for each partition?
 		// one can parallelize it at least?
 
-		request->local_overlap = calloc(partitions, sizeof(int));
-		request->local_overlap_count = malloc(partitions * sizeof(int));
+		request->local_overlap = (int*) calloc(partitions, sizeof(int));
+		request->local_overlap_count = (int*) malloc(partitions * sizeof(int));
 
 		for (int i = 0; i < partitions; ++i) {
 			long partition_min = (long) buf
 					+ (request->partition_length_bytes * i);
-			long partition_max = partition_min
-					+ request->partition_length_bytes -1;
+			long partition_max = partition_min + request->partition_length_bytes
+					- 1;
 			// boundary is exclusive
-
 
 			// mem access = Ax+b ==> x = (mem-b)/A
 			long min_loop_iter = (partition_min - B_min) / A_min;
