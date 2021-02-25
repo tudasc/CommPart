@@ -87,14 +87,16 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 
 	}
 	if (auto *ptr_arg = dyn_cast<AllocaInst>(in_parallel)) {
+
+		errs() << "Try to find alloca value\n";
 		// e.g. the values set by the for_init call
 
 		// as we want the value outside of the omp parallel we just need to get the first value stored
-		// if value isnt stored within the first BasicBlock there is no defined value
 
 		Instruction *next_inst = ptr_arg->getNextNode();
 
 		while (next_inst != nullptr) {
+			next_inst->dump();
 			if (auto *s = dyn_cast<StoreInst>(next_inst)) {
 				if (s->getPointerOperand() == ptr_arg) {
 					// found matching store
@@ -102,7 +104,16 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 							parallel_region);
 				}
 			}
-			next_inst = next_inst->getNextNode();
+			if (auto *br = dyn_cast<BranchInst>(next_inst)) {
+				//somtimes openmp will skip the loop directly here
+				// check if false block only leads to return
+				if (isa<ReturnInst>(br->getSuccessor(1)->getFirstNonPHI())) {
+					next_inst = br->getSuccessor(0)->getFirstNonPHI();
+				}
+
+			} else {
+				next_inst = next_inst->getNextNode();
+			}
 		}
 		//TODO is there any other way a variable is set besides store?
 
