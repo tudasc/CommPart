@@ -118,6 +118,9 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 	Instruction *insert_point = get_last_instruction(
 			operands_in_serial_as_instructions);
 
+	// after the last operand
+
+	insert_point=insert_point->getNextNode();
 	if (insert_point == nullptr) {
 		// if unknown: use the fork call
 		insert_point = parallel_region->get_fork_call();
@@ -166,6 +169,7 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 				auto *Dtree = analysis_results->getDomTree(
 						parallel_region->get_fork_call()->getFunction());
 
+
 				// we only need to take care about stored before the fork call
 				std::vector<Instruction*> store_list;
 				for (auto *u : ptr_in_serial->users()) {
@@ -179,6 +183,8 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 						}
 					}
 				}
+
+
 
 				if (store_list.size() != 0) {
 					auto *last_i = get_last_instruction(store_list);
