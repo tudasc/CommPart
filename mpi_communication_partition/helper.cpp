@@ -139,6 +139,11 @@ size_t get_size_in_Byte(llvm::Module &M, llvm::Type *type)
 			return nullptr;
 		}
 
+		Debug(
+				// no nullptrs are allowed
+		for (auto* i : inst_list){assert(i!=nullptr);}
+		)
+
 		Instruction *current_instruction = inst_list[0];
 		bool is_viable = true;
 		auto *Pdomtree = analysis_results->getPostDomTree(

@@ -56,7 +56,6 @@ Value* get_value_in_serial_part(Value *in_parallel,
 // Openmp will sub 1 from loop bound as the openmp function expect loop bound as inclusive
 Value* get_instruction_in_serial_part(Instruction *in_parallel,
 		Microtask *parallel_region) {
-	// only sub or add is allowed
 
 	bool is_allowed = false;
 
@@ -73,6 +72,8 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 	// only control-flow instructions such as branches are forbidden
 
 	if (!is_allowed) {
+		errs() << "Currently not supported:\n";
+		in_parallel->dump();
 		return nullptr;
 	}
 
@@ -86,11 +87,14 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 				return get_value_in_serial_part(v, parallel_region);
 			});
 
+	assert (operands_in_serial.size() == in_parallel->getNumOperands());
+
 	// found all operands in serial?
-	if (std::all_of(operands_in_serial.begin(), operands_in_serial.end(),
+	if (!std::all_of(operands_in_serial.begin(), operands_in_serial.end(),
 			[](auto *v) {
-				return v != nullptr;
+				return (v != nullptr);
 			})) {
+		errs() << "not found all values in serial";
 		return nullptr;
 	}
 
@@ -108,7 +112,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 	operands_in_serial_as_instructions.erase(
 			std::remove_if(operands_in_serial_as_instructions.begin(),
 					operands_in_serial_as_instructions.end(), [](auto *v) {
-						return v != nullptr;
+						return v == nullptr;
 					}),operands_in_serial_as_instructions.end());
 
 	Instruction *insert_point = get_last_instruction(
@@ -153,34 +157,55 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 			if (ptr_arg->hasAttribute(Attribute::ReadOnly)) {
 				// we need to find the value stored to this pointer in serial part
 
-				Value* ptr_in_serial= parallel_region->get_value_in_main(ptr_arg);
+				Value *ptr_in_serial = parallel_region->get_value_in_main(
+						ptr_arg);
+				assert(ptr_in_serial != nullptr);
 
-				std::vector<Instruction*>store_list;
-				for (auto* v : ptr_in_serial->users()) {
-					if (auto* i = dyn_cast<Instruction>(v)){
-						store_list.push_back(i);
+				auto *PDtree = analysis_results->getPostDomTree(
+						parallel_region->get_fork_call()->getFunction());
+				auto *Dtree = analysis_results->getDomTree(
+						parallel_region->get_fork_call()->getFunction());
+
+				// we only need to take care about stored before the fork call
+				std::vector<Instruction*> store_list;
+				for (auto *u : ptr_in_serial->users()) {
+					if (auto *i = dyn_cast<Instruction>(u)) {
+						// if not proven after fork
+						if (!Dtree->dominates(parallel_region->get_fork_call(),
+								i)
+								&& !PDtree->dominates(
+										parallel_region->get_fork_call(), i)) {
+							store_list.push_back(i);
+						}
 					}
 				}
 
-				auto* last_i = get_last_instruction(store_list);
-				if (auto* last_store = dyn_cast<StoreInst>(last_i)){
-					if(last_store->getPointerOperand()==ptr_in_serial){
-						return last_store->getValueOperand();
+				if (store_list.size() != 0) {
+					auto *last_i = get_last_instruction(store_list);
 
-					}else{
-						assert(false && "detected something that is currently not supported\n");
+					if (auto *last_store = dyn_cast_or_null<StoreInst>(
+							last_i)) {
+						if (last_store->getPointerOperand() == ptr_in_serial) {
+							return last_store->getValueOperand();
+
+						} else {
+							assert(
+									false
+											&& "detected something that is currently not supported\n");
+							return nullptr;
+							//TODO handle this case?
+						}
+
+					} else {
+						errs()
+								<< "Last operation to shared var is not a store:";
+						last_i->dump();
 						return nullptr;
-						//TODO handle this case?
 					}
-
-
-				}else{
-					errs() << "Last operation to shared var is not a store:";
-					last_i->dump();
-					return nullptr;
+				} else {
+					// not found uses of this pointer?
+					assert(false && "Error: not find uses of ptr");
 				}
-
-
 
 			} else {
 				errs()
