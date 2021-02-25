@@ -68,11 +68,8 @@
 #include <utility>
 #include <vector>
 
-#include "additional_assertions.h"
 #include "analysis_results.h"
-#include "conflict_detection.h"
 #include "debug.h"
-#include "function_coverage.h"
 #include "implementation_specific.h"
 #include "mpi_functions.h"
 #include "Openmp_region.h"
@@ -89,7 +86,6 @@ RequiredAnalysisResults *analysis_results;
 
 struct mpi_functions *mpi_func;
 ImplementationSpecifics *mpi_implementation_specifics;
-FunctionMetadata *function_metadata;
 
 namespace {
 struct MSGOrderRelaxCheckerPass: public ModulePass {
@@ -155,8 +151,6 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		analysis_results = new RequiredAnalysisResults(this, &M);
 
-//function_metadata = new FunctionMetadata(analysis_results->getTLI(), M);
-
 		mpi_implementation_specifics = new ImplementationSpecifics(M);
 
 // find MPI Send calls
@@ -187,8 +181,6 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		delete mpi_func;
 		delete mpi_implementation_specifics;
 		delete analysis_results;
-
-//delete function_metadata;
 
 		return modification;
 
