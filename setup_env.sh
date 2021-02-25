@@ -22,3 +22,7 @@ export CXX=clang++
 # include path
 
 export CPATH=$CPATH:/home/tj75qeje/mpi-partitioned-communication/lib
+
+# use 4 threads as standard
+export OMP_NUM_THREADS=4
+
