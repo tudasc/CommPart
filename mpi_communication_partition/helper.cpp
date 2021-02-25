@@ -1,5 +1,6 @@
 #include "helper.h"
 #include "analysis_results.h"
+#include "debug.h"
 
 #include <mpi.h>
 
@@ -142,6 +143,8 @@ size_t get_size_in_Byte(llvm::Module &M, llvm::Type *type)
 		bool is_viable = true;
 		auto *Pdomtree = analysis_results->getPostDomTree(
 				current_instruction->getFunction());
+		auto *Domtree = analysis_results->getDomTree(
+					current_instruction->getFunction());
 
 // first entry is current candidate
 		for (auto it = inst_list.begin() + 1; it < inst_list.end(); ++it) {
@@ -161,8 +164,14 @@ size_t get_size_in_Byte(llvm::Module &M, llvm::Type *type)
 			// therefore we need to recheck
 			for (auto *i : inst_list) {
 				if (i != current_instruction
-						&& !Pdomtree->dominates(current_instruction, i)) {
+						&& !Domtree->dominates(current_instruction, i)
+						&& !Pdomtree->dominates(current_instruction, i) ) {
 					// found a non dominate relation: abort
+					Debug(
+					errs() << "could not analyze relation between \n";
+					current_instruction->dump();
+					i->dump();)
+
 					return nullptr;
 				}
 			}
