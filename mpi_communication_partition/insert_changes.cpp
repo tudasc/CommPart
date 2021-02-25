@@ -148,10 +148,46 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 	if (auto *load = dyn_cast<LoadInst>(in_parallel)) {
 
 		if (auto *ptr_arg = dyn_cast<Argument>(load->getPointerOperand())) {
-			//TODO do we need to handle a load from ptr given to parallel?
-			errs()
-					<< "Loading from ptr given to parallel is not supported yet\n";
-			return nullptr;
+			//handle a load from ptr given to parallel
+			// only do it if it is firstprivate (e.g. readonly)
+			if (ptr_arg->hasAttribute(Attribute::ReadOnly)) {
+				// we need to find the value stored to this pointer in serial part
+
+				Value* ptr_in_serial= parallel_region->get_value_in_main(ptr_arg);
+
+				std::vector<Instruction*>store_list;
+				for (auto* v : ptr_in_serial->users()) {
+					if (auto* i = dyn_cast<Instruction>(v)){
+						store_list.push_back(i);
+					}
+				}
+
+				auto* last_i = get_last_instruction(store_list);
+				if (auto* last_store = dyn_cast<StoreInst>(last_i)){
+					if(last_store->getPointerOperand()==ptr_in_serial){
+						return last_store->getValueOperand();
+
+					}else{
+						assert(false && "detected something that is currently not supported\n");
+						return nullptr;
+						//TODO handle this case?
+					}
+
+
+				}else{
+					errs() << "Last operation to shared var is not a store:";
+					last_i->dump();
+					return nullptr;
+				}
+
+
+
+			} else {
+				errs()
+						<< "Fund that the message partitioning depend on a shared variablle.\n Try to use firstprivate clause wherever possible to enable message partitioning\n";
+				return nullptr;
+			}
+
 		} else if (auto *ptr_arg = dyn_cast<AllocaInst>(
 				load->getPointerOperand())) {
 			return get_value_in_serial_part(ptr_arg, parallel_region);
