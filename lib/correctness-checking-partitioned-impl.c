@@ -255,19 +255,29 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 					chunk_adress_begin[current_chunk_begin],
 					msg_chunks_begin[current_chunk_begin],
 					chunk_adress_begin[current_chunk_begin] - base_adress);
+			free(msg_chunks_begin[current_chunk_begin]);
 			current_chunk_begin++;
 		} else if (curr_chunk_add_end < curr_P) {
 			printf("0x%.8lX: %s (%ld)\n", chunk_adress_end[current_chunk_end],
 					msg_chunks_end[current_chunk_end],
 					chunk_adress_end[current_chunk_end] - base_adress);
+			free(msg_chunks_end[current_chunk_end]);
 			current_chunk_end++;
 		} else {
 			printf("0x%.8lX: %s (%ld)\n", partition_adress[current_partition],
 					msg_partitions[current_partition],
 					partition_adress[current_partition] - base_adress);
+			free(msg_partitions[current_partition]);
 			current_partition++;
 		}
 	}
+
+	free(msg_chunks_begin);
+	free(msg_chunks_end);
+	free(msg_partitions);
+	free(chunk_adress_begin);
+	free(chunk_adress_end);
+	free(partition_adress);
 
 	printf("\n");
 	printf("Partitions overlap_count:\n");
