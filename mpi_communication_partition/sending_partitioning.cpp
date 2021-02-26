@@ -116,9 +116,9 @@ Instruction* get_latest_modification_of_pointer(Value *ptr,
 		Instruction *search_before,
 		const std::vector<Instruction*> exclude_instructions) {
 	// will yield the latest modification = write to ptr
-	// before the instructhin search_before, but exclude exclude_instructions --> e.g. instr that where already handled
-	// gather all uses of this buffer
+	// before the instruction in search_before, but exclude exclude_instructions --> e.g. instr that where already handled
 
+	// gather all uses of this buffer
 	LoopInfo *linfo = analysis_results->getLoopInfo(
 			search_before->getParent()->getParent());
 	DominatorTree *dt = analysis_results->getDomTree(

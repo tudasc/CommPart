@@ -19,6 +19,11 @@ std::vector<llvm::User *> get_function_users(llvm::Module &, llvm::StringRef);
 // nullptr if not found
 llvm::Instruction* get_last_instruction(std::vector<llvm::Instruction*> inst_list);
 
+// True if A is proven before B
+//  False if B is proven before A
+// assert fail if no order between A and B can be proven
+bool is_instruction_before(llvm::Instruction *A, llvm::Instruction *B);
+
 
 /**
  * Searches the Function for all uses of instructions of type T and returns them in a

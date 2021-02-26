@@ -20,6 +20,7 @@
 #include "helper.h"
 #include "analysis_results.h"
 #include "mpi_functions.h"
+#include "sending_partitioning.h"
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
@@ -28,6 +29,125 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 using namespace llvm;
+
+Instruction* move_to_maximum_upwards_point(Instruction *inst,
+		std::vector<Instruction*> ignore) {
+
+	assert(inst != nullptr);
+
+	//TODO how to move out pf loop in this design?
+
+	// each param seperately and then ask for if loop of patiition call is still same
+
+	if (auto *call = dyn_cast<CallInst>(inst)) {
+		errs() << "will not move call instruction\n";
+	} else if (auto *load = dyn_cast<LoadInst>(inst)) {
+
+		auto *move_after = get_latest_modification_of_pointer(
+				load->getPointerOperand(), load, ignore);
+		inst->moveAfter(move_after);
+		return inst;
+
+	} else if (inst->isUnaryOp()) {
+
+		auto *operand = inst->getOperand(0);
+		if (auto *operand_inst = dyn_cast<Instruction>(operand)) {
+			auto *move_after = move_to_maximum_upwards_point(operand_inst,
+					ignore);
+			inst->moveAfter(move_after);
+			return inst;
+		} else {
+			// constat or parameter:
+			//can move at the beginning of func
+			auto *move_after =
+					inst->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
+			inst->moveAfter(move_after);
+			return inst;
+		}
+
+	} else if (inst->isBinaryOp()) {
+
+		auto *move_after =
+				inst->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
+		auto *operand0 = inst->getOperand(0);
+		if (auto *operand_inst = dyn_cast<Instruction>(operand0)) {
+			move_after = move_to_maximum_upwards_point(operand_inst, ignore);
+		}
+		auto *operand1 = inst->getOperand(1);
+		if (auto *operand_inst = dyn_cast<Instruction>(operand1)) {
+			auto *other_operand = move_to_maximum_upwards_point(operand_inst,
+					ignore);
+
+			if (is_instruction_before(move_after, other_operand)) {
+				move_after = other_operand;
+			}
+		}
+		inst->moveAfter(move_after);
+
+	} else {
+		errs() << "no analysis for moving (will not move to extend nonblocking window):\n";
+		inst->dump();
+		return inst;
+	}
+
+}
+
+// will move init call out of the loop if possible
+// and "up" as much as possible
+// will move free call accordingly (out of the loop if necessary)
+void move_init_and_free_call(CallInst *init_call, CallInst *free_call,
+		CallInst *fork_call) {
+
+//TODO move "up" all args as much as possible
+
+// will not cross function boundary
+	Instruction *maximum_upwards_point =
+			init_call->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
+
+// no need to ignofe free call, it will not interfere with our analysis
+	std::vector<Instruction*> ignore = { fork_call, init_call };
+
+	bool all_args_loop_invariant = true;
+
+// check for the maximum upwards point for each of the arguments
+	for (unsigned int i = 0; i < init_call->getNumArgOperands(); ++i) {
+
+		// Request was inserted by us, no need to trace it
+		if (i != 6) {
+			// if no instruction: e.g. constatnt or func arg: no need to handle it, it can always be moved up
+			if (auto *arg = dyn_cast<Instruction>(
+					init_call->getArgOperand(i))) {
+
+			}
+		}
+	}
+
+//vorgehen:
+//für jedes arg: den maximum upwards point bestimmen und die instr entsprechend moven --> keine änderung an semantik
+
+// eventuiell outside of loopp moven if all args are loop invariant
+//TODO bestimme, ob load loop invariant ist
+
+// was ich besser als clang kan: über fork call moven
+// über mpi calls moven
+
+}
+
+//TODO implement
+// move wait call as much "down" as possible ==> greater overlap
+void move_wait_call() {
+
+	errs() << "Extending the non-blocking window is not implemented Yet\n";
+}
+
+// move wait call as much "up" as possible ==> greater overlap
+void move_start_call() {
+	errs() << "Extending the non-blocking window is not implemented Yet\n";
+}
+
+void move_request_free_call() {
+
+}
 
 //TODO is there a better option to do it, it seems that this only reverse engenieer the analysis done by llvm
 // calculates the start value and inserts the calculation into the program
@@ -45,10 +165,10 @@ Value* get_value_in_serial_part(Value *in_parallel,
 		in_parallel->dump();
 	}
 
-	//in_parallel->dump();
-	//errs() << " to:\n";
-	//result->dump();
-	//errs() << "\n";
+//in_parallel->dump();
+//errs() << " to:\n";
+//result->dump();
+//errs() << "\n";
 	return result;
 }
 
@@ -59,17 +179,17 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 
 	bool is_allowed = false;
 
-	// unary
+// unary
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::SExt);
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::ZExt);
 
-	// binary
+// binary
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Add);
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Sub);
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Mul);
 
-	//TODO add more allowed instructions if needed
-	// only control-flow instructions such as branches are forbidden
+//TODO add more allowed instructions if needed
+// only control-flow instructions such as branches are forbidden
 
 	if (!is_allowed) {
 		errs() << "Currently not supported:\n";
@@ -77,7 +197,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 		return nullptr;
 	}
 
-	// find all operands in serial
+// find all operands in serial
 	std::vector<Value*> operands_in_serial;
 	operands_in_serial.reserve(in_parallel->getNumOperands());
 
@@ -89,7 +209,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 
 	assert(operands_in_serial.size() == in_parallel->getNumOperands());
 
-	// found all operands in serial?
+// found all operands in serial?
 	if (!std::all_of(operands_in_serial.begin(), operands_in_serial.end(),
 			[](auto *v) {
 				return (v != nullptr);
@@ -98,7 +218,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 		return nullptr;
 	}
 
-	// find insertion point
+// find insertion point
 	std::vector<Instruction*> operands_in_serial_as_instructions;
 	operands_in_serial_as_instructions.reserve(operands_in_serial.size());
 
@@ -108,7 +228,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 				return dyn_cast<Instruction>(v);
 			});
 
-	// remove all nullptrs
+// remove all nullptrs
 	operands_in_serial_as_instructions.erase(
 			std::remove_if(operands_in_serial_as_instructions.begin(),
 					operands_in_serial_as_instructions.end(), [](auto *v) {
@@ -118,7 +238,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 	Instruction *insert_point = get_last_instruction(
 			operands_in_serial_as_instructions);
 
-	// after the last operand
+// after the last operand
 
 	insert_point = insert_point->getNextNode();
 	if (insert_point == nullptr) {
@@ -136,7 +256,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 
 Value* get_value_stored_before_parallel_region(Value *ptr_in_serial,
 		Microtask *parallel_region) {
-	//errs() << "get value of Firstprivate var\n";
+//errs() << "get value of Firstprivate var\n";
 
 	assert(ptr_in_serial != nullptr);
 
@@ -145,7 +265,7 @@ Value* get_value_stored_before_parallel_region(Value *ptr_in_serial,
 	auto *Dtree = analysis_results->getDomTree(
 			parallel_region->get_fork_call()->getFunction());
 
-	// we only need to take care about stored before the fork call
+// we only need to take care about stored before the fork call
 	std::vector<Instruction*> store_list;
 	for (auto *u : ptr_in_serial->users()) {
 		if (auto *i = dyn_cast<Instruction>(u)) {
@@ -194,7 +314,7 @@ Value* get_value_stored_before_parallel_region(Value *ptr_in_serial,
 Value* get_value_in_serial_part_impl(Value *in_parallel,
 		Microtask *parallel_region) {
 
-	//nullptr --> nullptr
+//nullptr --> nullptr
 	if (in_parallel == nullptr) {
 		return nullptr;
 	}
@@ -269,7 +389,7 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 		//TODO is there any other way a variable is set besides store?
 
 	}
-	// also allowed: add or sub with values known in serial
+// also allowed: add or sub with values known in serial
 	if (auto *inst = dyn_cast<Instruction>(in_parallel)) {
 		return get_instruction_in_serial_part(inst, parallel_region);
 	}
@@ -316,8 +436,8 @@ Value* getAsInt(Value *v, Instruction *insert_before) {
 Value* get_scev_value_before_parallel_function(const SCEV *scev,
 		Instruction *insert_before, Microtask *parallel_region) {
 
-	//scev->print(errs());
-	//errs() << "\n";
+//scev->print(errs());
+//errs() << "\n";
 
 	if (auto *c = dyn_cast<SCEVUnknown>(scev)) {
 		//c->getValue()->print(errs());
@@ -454,20 +574,20 @@ Function* duplicate_parallel_function_with_added_request(
 		new_arg_types.push_back(t);
 
 	}
-	// add the ptr to Request
+// add the ptr to Request
 	new_arg_types.push_back(mpi_func->mpix_request_type->getPointerTo());
 
 	auto *new_ftype = FunctionType::get(ftype->getReturnType(), new_arg_types,
 			ftype->isVarArg());
 
-	//TODO do we need to invalidate the Microtask object? AT THE END OF FUNCTION when all analysis is done
+//TODO do we need to invalidate the Microtask object? AT THE END OF FUNCTION when all analysis is done
 	auto new_name = parallel_region->get_function()->getName() + "_p";
 
 	Function *new_parallel_function = Function::Create(new_ftype,
 			parallel_region->get_function()->getLinkage(), new_name,
 			parallel_region->get_function()->getParent());
 
-	// build mapping for all the original arguments
+// build mapping for all the original arguments
 	for (auto arg_orig_iter = parallel_region->get_function()->arg_begin(),
 			arg_new_iter = new_parallel_function->arg_begin();
 			arg_orig_iter != parallel_region->get_function()->arg_end();
@@ -478,29 +598,29 @@ Function* duplicate_parallel_function_with_added_request(
 		VMap.insert(kv);
 	}
 
-	//only one return in ompoutlined
+//only one return in ompoutlined
 	SmallVector<ReturnInst*, 1> returns;
 
-	// if migrating to newer LLvm false need to become llvm::CloneFunctionChangeType::LocalChangesOnly
+// if migrating to newer LLvm false need to become llvm::CloneFunctionChangeType::LocalChangesOnly
 	llvm::CloneFunctionInto(new_parallel_function,
 			parallel_region->get_function(), VMap, false, returns);
-	//, NameSuffix, CodeInfo, TypeMapper, Materializer)
+//, NameSuffix, CodeInfo, TypeMapper, Materializer)
 
 	return new_parallel_function;
 }
 
 void add_partition_signoff_call(ValueToValueMapTy &VMap,
 		Microtask *parallel_region, Function *new_parallel_function) {
-	// need to add a call to signoff_partitions after a loop iteration has finished
+// need to add a call to signoff_partitions after a loop iteration has finished
 
-	// all of this analysis happens in old version of the function!
+// all of this analysis happens in old version of the function!
 	auto *loop_end_block = parallel_region->find_loop_end_block();
-	// this block must contain a store to lower bound and upper bound
-	// ptr comes from init_function
+// this block must contain a store to lower bound and upper bound
+// ptr comes from init_function
 	CallInst *init_call = parallel_region->get_parallel_for()->init;
 	auto *ptr_omp_lb = init_call->getArgOperand(4);
 	auto *ptr_omp_ub = init_call->getArgOperand(5);
-	// these need to be instructions in the omp.dispatch.inc block
+// these need to be instructions in the omp.dispatch.inc block
 	Instruction *omp_lb = nullptr;
 	Instruction *omp_ub = nullptr;
 	for (auto &inst : *loop_end_block) {
@@ -523,44 +643,44 @@ void add_partition_signoff_call(ValueToValueMapTy &VMap,
 	assert(omp_lb->getParent() == omp_ub->getParent());
 	assert(loop_end_block->getPrevNode() == omp_lb->getParent());
 
-	// we want the old lower bound of the passed iteration, not the new one for the next iter
+// we want the old lower bound of the passed iteration, not the new one for the next iter
 	Instruction *add_lb = cast<Instruction>(omp_lb);
 	assert(add_lb->getOpcode() == Instruction::Add);
 	omp_lb = cast<Instruction>(add_lb->getOperand(1));
-	//TODO assert that the other operand of add is the value of %omp_stride ?
+//TODO assert that the other operand of add is the value of %omp_stride ?
 
-	// same for the upper bound but need to handle the select instr first
+// same for the upper bound but need to handle the select instr first
 	auto *select_inst = cast<SelectInst>(omp_ub);
 	omp_ub = cast<Instruction>(select_inst->getTrueValue());
 	Instruction *add_ub = cast<Instruction>(omp_ub);
 	assert(add_ub->getOpcode() == Instruction::Add);
 	omp_ub = cast<Instruction>(add_ub->getOperand(1));
 
-	//TODO assert that the other operand of add is the value of %omp_stride ?
+//TODO assert that the other operand of add is the value of %omp_stride ?
 	assert(add_ub->getOperand(0) == add_lb->getOperand(0)); // at least the stride must be equal
 
-	// insert point is at the end of a loop chunk
+// insert point is at the end of a loop chunk
 	Instruction *original_insert_point = add_lb->getParent()->getTerminator();
-	//if we add att the location of omp_lb or omp_ub this would be at the beginning
+//if we add att the location of omp_lb or omp_ub this would be at the beginning
 
-	// now transition to the copy of parallel func including the request parameter:
+// now transition to the copy of parallel func including the request parameter:
 	omp_lb = cast<Instruction>(VMap[omp_lb]);
 	omp_ub = cast<Instruction>(VMap[omp_ub]);
-	//TODO these are the wrong values!!!
-	// assertions must still hold
+//TODO these are the wrong values!!!
+// assertions must still hold
 	assert(omp_lb != nullptr && omp_ub != nullptr);
 	assert(omp_lb->getParent() == omp_ub->getParent());
-	//assert(loop_end_block->getPrevNode() == omp_lb->getParent());
-	// if we want to test this assertion we need to first get the loop_end_block in the copy
-	// insert before final instruction of this block
+//assert(loop_end_block->getPrevNode() == omp_lb->getParent());
+// if we want to test this assertion we need to first get the loop_end_block in the copy
+// insert before final instruction of this block
 	Instruction *insert_point_in_copy = cast<Instruction>(
 			VMap[original_insert_point]);
 	IRBuilder<> builder_in_copy(insert_point_in_copy);
-	//TODO is there a different insert point for dynamic scheduled loops?
-	// it is the last argument
+//TODO is there a different insert point for dynamic scheduled loops?
+// it is the last argument
 	Value *request = new_parallel_function->getArg(
 			new_parallel_function->getFunctionType()->getNumParams() - 1);
-	// maybe we need a sign_extend form i32 to i64
+// maybe we need a sign_extend form i32 to i64
 	Type *loop_bound_type =
 			mpi_func->signoff_partitions_after_loop_iter->getFunctionType()->getParamType(
 					1);
@@ -584,17 +704,17 @@ void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 		Microtask *parallel_region, CallInst *send_call,
 		const SCEVAddRecExpr *min_adress, const SCEVAddRecExpr *max_adress) {
 
-	//call void @__kmpc_for_static_init_4(%struct.ident_t* nonnull @3, i32 %4, i32 33, i32* nonnull %.omp.is_last, i32* nonnull %.omp.lb, i32* nonnull %.omp.ub, i32* nonnull %.omp.stride, i32 1, i32 1000) #8
+//call void @__kmpc_for_static_init_4(%struct.ident_t* nonnull @3, i32 %4, i32 33, i32* nonnull %.omp.is_last, i32* nonnull %.omp.lb, i32* nonnull %.omp.ub, i32* nonnull %.omp.stride, i32 1, i32 1000) #8
 
-	//int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
-	//int dest, int tag, MPI_Comm comm, MPIX_Request *request,
-	// loop info
-	// access= pattern ax+b
-	//long A_min, long B_min, long A_max, long B_max, long chunk_size,
-	//long loop_min, long loop_max)
-	// collect all arguments for the partitioned call
+//int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
+//int dest, int tag, MPI_Comm comm, MPIX_Request *request,
+// loop info
+// access= pattern ax+b
+//long A_min, long B_min, long A_max, long B_max, long chunk_size,
+//long loop_min, long loop_max)
+// collect all arguments for the partitioned call
 
-	// args form original send
+// args form original send
 	Value *buf = send_call->getArgOperand(0);
 	Value *count = send_call->getArgOperand(1);
 	Value *datatype = send_call->getArgOperand(2);
@@ -602,12 +722,12 @@ void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 	Value *tag = send_call->getArgOperand(4);
 	Value *comm = send_call->getArgOperand(5);
 
-	//TODO do we need to check if all of those values are accessible from this function?
+//TODO do we need to check if all of those values are accessible from this function?
 
 	auto *SE = analysis_results->getSE(parallel_region->get_function());
-	//TODO insert it at top of function
+//TODO insert it at top of function
 
-	// arguments for partitioning
+// arguments for partitioning
 
 	Value *A_min = get_scev_value_before_parallel_function(
 			min_adress->getStepRecurrence(*SE), insert_point, parallel_region);
@@ -621,17 +741,17 @@ void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 	Value *B_max = get_scev_value_before_parallel_function(
 			max_adress->getStart(), insert_point, parallel_region);
 
-	// 8th parameter of static_for_init
+// 8th parameter of static_for_init
 	Value *chunk_size = get_value_in_serial_part(
 			parallel_region->get_parallel_for()->init->getArgOperand(8),
 			parallel_region);
 
-	// 4th parameter of static_for_init
+// 4th parameter of static_for_init
 	Value *loop_min = get_value_in_serial_part(
 			parallel_region->get_parallel_for()->init->getArgOperand(4),
 			parallel_region);
 
-	// 5th parameter of static_for_init
+// 5th parameter of static_for_init
 	Value *loop_max = get_value_in_serial_part(
 			parallel_region->get_parallel_for()->init->getArgOperand(5),
 			parallel_region);
@@ -640,7 +760,7 @@ void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 			dest, tag, comm, request_ptr, A_min, B_min, A_max, B_max,
 			chunk_size, loop_min, loop_max };
 
-	// add a sign extension for all args if needed
+// add a sign extension for all args if needed
 	std::vector<Value*> argument_list;
 	argument_list.reserve(argument_list_with_wrong_types.size());
 
@@ -660,7 +780,7 @@ void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 				}
 			});
 
-	//errs() << "Collected all Values: insert partitioning call\n";
+//errs() << "Collected all Values: insert partitioning call\n";
 	IRBuilder<> builder(insert_point);
 
 	builder.CreateCall(mpi_func->partition_sending_op, argument_list,
@@ -668,10 +788,10 @@ void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 }
 
 CallInst* replace_old_send_with_wait(CallInst *send_call, Value *request_ptr) {
-	// now we need to replace the send call with the wait
+// now we need to replace the send call with the wait
 	IRBuilder<> builder(send_call);
 
-	//TODO set status ignore instead?
+//TODO set status ignore instead?
 
 	Type *MPI_status_ptr_type =
 			mpi_func->mpix_Wait->getFunctionType()->getParamType(1);
@@ -682,7 +802,7 @@ CallInst* replace_old_send_with_wait(CallInst *send_call, Value *request_ptr) {
 	Value *new_send_call = builder.CreateCall(mpi_func->mpix_Wait, {
 			request_ptr, status_ptr });
 
-	// and remove the old send call
+// and remove the old send call
 	send_call->replaceAllUsesWith(new_send_call);
 	send_call->eraseFromParent();
 
@@ -700,9 +820,9 @@ CallInst* insert_request_free(Instruction *insert_before, Value *request_ptr) {
 CallInst* insert_new_fork_call(Instruction *insert_point,
 		Microtask *parallel_region, Function *new_parallel_function,
 		Value *request_ptr) {
-	// fork_call
-	//call void (%struct.ident_t*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%struct.ident_t* nonnull @2, i32 2, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, i32*, i32*)* @.omp_outlined. to void (i32*, i32*, ...)*), i8* %call3, i32* nonnull %rank)
-	// change the call to the new ompoutlined
+// fork_call
+//call void (%struct.ident_t*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%struct.ident_t* nonnull @2, i32 2, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, i32*, i32*)* @.omp_outlined. to void (i32*, i32*, ...)*), i8* %call3, i32* nonnull %rank)
+// change the call to the new ompoutlined
 
 	IRBuilder<> builder(insert_point);
 
@@ -710,11 +830,11 @@ CallInst* insert_new_fork_call(Instruction *insert_point,
 	auto original_arg_it = original_fork_call->arg_begin();
 
 	Value *loc = *original_arg_it;
-	// no need to change it
+// no need to change it
 	original_arg_it = std::next(original_arg_it);// ++arg_it but std::next is the portable version for all iterators
 
 	Value *original_argc = *original_arg_it;
-	// we need to increment it as we add the MPI Request
+// we need to increment it as we add the MPI Request
 	assert(isa<ConstantInt>(original_argc));
 	auto *original_argc_constant = cast<ConstantInt>(original_argc);
 	long outlined_arg_count = original_argc_constant->getSExtValue();
@@ -722,7 +842,7 @@ CallInst* insert_new_fork_call(Instruction *insert_point,
 			outlined_arg_count + 1);
 	original_arg_it = std::next(original_arg_it);
 
-	// the microtask
+// the microtask
 	Value *original_microtask = *original_arg_it;
 	Value *new_microtask_arg = builder.CreateBitOrPointerCast(
 			new_parallel_function, original_microtask->getType());
@@ -731,10 +851,10 @@ CallInst* insert_new_fork_call(Instruction *insert_point,
 
 	std::vector<Value*> new_args { loc, new_argc, new_microtask_arg };
 	new_args.reserve(3 + outlined_arg_count + 1);
-	// all the original arguments
+// all the original arguments
 	std::copy(original_arg_it, original_fork_call->arg_end(),
 			std::back_inserter(new_args));
-	// and the MPI request
+// and the MPI request
 	new_args.push_back(request_ptr);
 
 	errs() << "insert new fork call\n";
@@ -748,36 +868,35 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 
 	assert(min_adress->isAffine() && max_adress->isAffine());
 
-	//TOOD for a static schedule, there should be a better way of getting the chunk_size!
+//TOOD for a static schedule, there should be a better way of getting the chunk_size!
 
 	errs() << "detected possible partitioning for MPI send Operation\n";
 
-	// we need to duplicate the original Function to add the MPi Request as an argument
+// we need to duplicate the original Function to add the MPi Request as an argument
 
-	// contains a mapping form all original values to the clone
+// contains a mapping form all original values to the clone
 	ValueToValueMapTy VMap;
 	Function *new_parallel_function =
 			duplicate_parallel_function_with_added_request(parallel_region,
 					VMap);
 
-	// need to add a call to signoff_partitions after a loop iteration has finished
+// need to add a call to signoff_partitions after a loop iteration has finished
 	add_partition_signoff_call(VMap, parallel_region, new_parallel_function);
 
 	auto *insert_point = parallel_region->get_fork_call();
 
-	IRBuilder<> builder(insert_point->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-	// MPI_Request at the start of the func in the first block
+	IRBuilder<> builder(
+			insert_point->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+// MPI_Request at the start of the func in the first block
 	Value *request_ptr = builder.CreateAlloca(mpi_func->mpix_request_type,
 			nullptr, "mpix_request");
-
-
 
 	add_partition_init_call(insert_point, request_ptr, parallel_region,
 			send_call, min_adress, max_adress);
 
-	// need to reset insert point if code was inserted before insert point but after position of builder
+// need to reset insert point if code was inserted before insert point but after position of builder
 	builder.SetInsertPoint(insert_point);
-	// start the communication
+// start the communication
 	builder.CreateCall(mpi_func->mpix_Start, { request_ptr });
 
 	auto *new_fork_call = insert_new_fork_call(insert_point, parallel_region,
@@ -785,10 +904,10 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 
 	Function *old_ompoutlined = parallel_region->get_function();
 	CallInst *original_fork_call = parallel_region->get_fork_call();
-	// remove old call
+// remove old call
 	original_fork_call->replaceAllUsesWith(new_fork_call);// unnecessary as it is c void return anyway
 	original_fork_call->eraseFromParent();
-	// remove old function if no longer needed
+// remove old function if no longer needed
 	if (old_ompoutlined->user_empty()) {
 		old_ompoutlined->eraseFromParent();
 		errs() << "Removed the old ompoutlined\n";
@@ -798,7 +917,7 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 			u->dump();
 	}
 
-	//TODO do we need to invalidate the microtask obj now?
+//TODO do we need to invalidate the microtask obj now?
 
 	auto *wait_call = replace_old_send_with_wait(send_call, request_ptr);
 
