@@ -22,4 +22,8 @@
 bool handle_fork_call(Microtask *parallel_region, llvm::CallInst *send_call);
 bool handle_send_call(llvm::CallInst *send_call);
 
+llvm::Instruction* get_latest_modification_of_pointer(llvm::Value *ptr,
+		llvm::Instruction *search_before,
+		const std::vector<llvm::Instruction*> exclude_instructions);
+
 #endif /* MPI_COMMUNICATION_PARTITION_SENDING_PARTITIONING_H_ */

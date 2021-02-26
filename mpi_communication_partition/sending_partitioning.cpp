@@ -28,6 +28,176 @@
 #include "llvm/Analysis/CFG.h"
 
 using namespace llvm;
+
+inline bool should_be_excluded(User *u,
+		const std::vector<Instruction*> exclude_instructions) {
+
+	return (std::find(exclude_instructions.begin(), exclude_instructions.end(),
+			u) != exclude_instructions.end());
+}
+
+bool should_function_call_be_considered_modification(Value *ptr,
+		CallInst *call) {
+	assert(
+			call->hasArgument(ptr)
+					&& "You are calling an MPI sendbuffer?\n I refuse to analyze this dark pointer magic!\n");
+
+	unsigned operand_position = 0;
+	while (call->getArgOperand(operand_position) != ptr) {
+		++operand_position;
+	}		// will terminate, as assert above secured that
+
+	if (operand_position
+			>= call->getCalledFunction()->getFunctionType()->getNumParams()) {
+		assert(call->getCalledFunction()->getFunctionType()->isVarArg());
+		operand_position =
+				call->getCalledFunction()->getFunctionType()->getNumParams()
+						- 1;
+		// it is one of the VarArgs
+	}
+
+	auto *ptr_argument = call->getCalledFunction()->getArg(operand_position);
+
+	if (call->getCalledFunction()->getName().equals("__kmpc_fork_call")) {
+
+		Microtask *parallel_region = new Microtask(call);
+
+		auto *buffer_ptr = parallel_region->get_value_in_mikrotask(ptr);
+
+		if (buffer_ptr->hasNoCaptureAttr()
+				&& buffer_ptr->hasAttribute(Attribute::ReadOnly)) {
+			// readonly and nocapture: nothing need to be done
+			return false;
+		} else {
+			return true;
+		}
+	} else if (call->getCalledFunction() == mpi_func->mpi_send) {
+		//TODO implement
+		//
+		return true;
+	} else if (call->getCalledFunction() == mpi_func->mpi_recv) {
+		// sending never does writing
+		return false;
+	} else {		// no known MPI or openmp func
+		if (ptr_argument->hasNoCaptureAttr()) {
+			if (call->getCalledFunction()->onlyReadsMemory()) {
+				//readonly is ok --> nothing to do
+				return false;
+			} else {
+				unsigned operand_position = 0;
+				while (call->getArgOperand(operand_position) != ptr) {
+					operand_position++;
+				}
+
+				if (ptr_argument->hasAttribute(Attribute::ReadOnly)) {
+					//readonly is ok --> nothing to do#
+					return false;
+				} else {
+					// function may write
+					return true;
+				}
+			}
+		} else {
+			// no nocapture: function captures the pointer ==> others may access it
+			// we cannot do any further analysis
+			errs() << "Function " << call->getCalledFunction()->getName()
+					<< " captures the send buffer pointer\n No further analysis possible\n";
+			return true;				// no may write
+		}
+	}
+
+	call->dump();
+	assert(false && "SHOULD NEVER REACH THIS");
+	return true;
+
+}
+
+Instruction* get_latest_modification_of_pointer(Value *ptr,
+		Instruction *search_before,
+		const std::vector<Instruction*> exclude_instructions) {
+	// will yield the latest modification = write to ptr
+	// before the instructhin search_before, but exclude exclude_instructions --> e.g. instr that where already handled
+	// gather all uses of this buffer
+
+	LoopInfo *linfo = analysis_results->getLoopInfo(
+			search_before->getParent()->getParent());
+	DominatorTree *dt = analysis_results->getDomTree(
+			search_before->getParent()->getParent());
+
+	std::vector<Instruction*> to_analyze;
+	for (auto *u : ptr->users()) {
+		if (!should_be_excluded(u, exclude_instructions)) {
+
+			if (auto *inst = dyn_cast<Instruction>(u)) {
+
+				if (llvm::isPotentiallyReachable(inst, search_before, nullptr,
+						dt, linfo)) {
+					// only then it may have an effect
+					to_analyze.push_back(inst);
+				}
+			}
+		}
+	}
+
+	Instruction *current_instruction = get_last_instruction(to_analyze);
+	while (current_instruction != nullptr) {
+
+		if (auto *store = dyn_cast<StoreInst>(current_instruction)) {
+			if (ptr == store->getValueOperand()) {
+				// add all uses of this stores Pointer operand "taint" this pointer and treat it as the ptr itself
+				// this will lead to false positives
+				//but there are not much meaningful uses of this anyway
+
+				for (auto *u : store->getPointerOperand()->users()) {
+					if (!should_be_excluded(u, exclude_instructions)
+							&& u != store) {
+
+						if (auto *i = dyn_cast<Instruction>(u)) {
+							to_analyze.push_back(i);
+
+						}
+					}
+				}
+			} else {
+				assert(ptr == store->getPointerOperand());
+				return store;
+			}
+
+		} else if (auto *call = dyn_cast<CallInst>(current_instruction)) {
+			if (should_function_call_be_considered_modification(ptr, call)) {
+				return call;
+			}
+		} else {
+			errs()
+					<< "Support for the analysis of this instruction is not implemented yet\n";
+			current_instruction->print(errs());
+			errs() << "\n";
+		}
+
+		//TODO handle other instructions such as
+		// GEP
+		// cast
+
+		// remove erase the analyzed instruction
+		to_analyze.erase(
+				std::remove(to_analyze.begin(), to_analyze.end(),
+						current_instruction), to_analyze.end());
+		if (to_analyze.size() > 0) {
+			current_instruction = get_last_instruction(to_analyze);
+		} else {
+			current_instruction = nullptr;
+			// nothing more to do
+			// no modification detected so far
+			errs() << "No pointer modification detected so far\n";
+			return nullptr;
+		}
+
+	}
+	assert(false && "SHOULD NOT REACH THIS");
+	return nullptr;
+
+}
+
 //TODO change discover of buffer ptr
 // buffer ptr may be the higher order ptr (before GEP)
 // send might be done on ptr resulting from GEP
@@ -250,150 +420,29 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 bool handle_send_call(CallInst *send_call) {
 //if using e.g. the adress of MPI send as buffer the user is dumb anyway
 	assert(send_call->getCalledFunction() == mpi_func->mpi_send);
-	send_call->print(errs());
-	errs() << "\n";
+	Debug(
+			errs() << "Handle Send call:\n";
+			send_call->print(errs());
+			errs() << "\n";)
 
-	LoopInfo *linfo = analysis_results->getLoopInfo(
-			send_call->getParent()->getParent());
-	DominatorTree *dt = analysis_results->getDomTree(
-			send_call->getParent()->getParent());
-
-	if (linfo->getLoopFor(send_call->getParent()) != nullptr) {
-		errs() << "Send in loop is currently not supported\n";
-		assert(false);
-	}
 	auto *buffer_ptr = send_call->getArgOperand(0);
 
-	// gather all uses of this buffer
-	std::vector<Instruction*> to_analyze;
-	for (auto *u : buffer_ptr->users()) {
-		if (u != send_call) {
+	std::vector<Instruction*> ignore = { send_call };
 
-			if (auto *inst = dyn_cast<Instruction>(u)) {
+	Instruction *latest_modification = get_latest_modification_of_pointer(
+			buffer_ptr, send_call, ignore);
 
-				if (llvm::isPotentiallyReachable(inst, send_call, nullptr, dt,
-						linfo)) {
-					// only then it may have an effect
-					to_analyze.push_back(inst);
-				}
-			}
-		}
-	}
-
-	//TODO need to refactor this!
-	Instruction *to_handle = get_last_instruction(to_analyze);
-	while (to_handle != nullptr) {
-
-		//to_handle->print(errs());
-		//errs() << "\n";
-		if (auto *store = dyn_cast<StoreInst>(to_handle)) {
-			if (buffer_ptr == store->getValueOperand()) {
-				// add all uses of the Pointer operand "taint" this pointer and treat it as the msg buffer itself
-				// this will lead to false positives
-				//but there are not much meaningful uses of this anyway
-
-				for (auto *u : store->getPointerOperand()->users()) {
-					if (u != store) {
-						if (auto *i = dyn_cast<Instruction>(u)) {
-							to_analyze.push_back(i);
-						}
-					}
-				}
-			} else {
-				assert(buffer_ptr == store->getPointerOperand());
-				return handle_modification_location(send_call, to_handle);
-			}
-
-		} else if (auto *call = dyn_cast<CallInst>(to_handle)) {
-
-			assert(
-					call->hasArgument(buffer_ptr)
-							&& "You arer calling an MPI sendbuffer?\n I refuse to analyze this dak pointer magic!\n");
-
-			unsigned operand_position = 0;
-			while (call->getArgOperand(operand_position) != buffer_ptr) {
-				++operand_position;
-			}		// will terminate, as assert above secured that
-
-			if (operand_position
-					>= call->getCalledFunction()->getFunctionType()->getNumParams()) {
-				assert(
-						call->getCalledFunction()->getFunctionType()->isVarArg());
-				operand_position =
-						call->getCalledFunction()->getFunctionType()->getNumParams()
-								- 1;
-				// it is one of the VarArgs
-			}
-
-			auto *ptr_argument = call->getCalledFunction()->getArg(
-					operand_position);
-
-			if (call->getCalledFunction()->getName().equals(
-					"__kmpc_fork_call")) {
-
-				Microtask *parallel_region = new Microtask(call);
-
-				bool handled = handle_fork_call(parallel_region, send_call);
-				if (handled) {
-					//TODO refactro if output form handle_fork_call change
-					return true;
-				}
-
-			} else {
-				if (ptr_argument->hasNoCaptureAttr()) {
-					if (call->getCalledFunction()->onlyReadsMemory()) {
-						//readonly is ok --> nothing to do
-					} else {
-						unsigned operand_position = 0;
-						while (call->getArgOperand(operand_position)
-								!= buffer_ptr) {
-							operand_position++;
-						}
-
-						if (ptr_argument->hasAttribute(Attribute::ReadOnly)) {
-							//readonly is ok --> nothing to do
-						} else {
-							// function may write
-							return handle_modification_location(send_call, call);
-						}
-					}
-				} else {
-					// no nocapture: function captures the pointer ==> others may access it
-					// we cannot do any further analysis
-					errs() << "Function "
-							<< call->getCalledFunction()->getName()
-							<< " captures the send buffer pointer\n No further analysis possible\n";
-						return false; // no change made
-				}
-			}
-
+	if (auto *call = dyn_cast<CallInst>(latest_modification)) {
+		if (call->getCalledFunction()->getName().equals("__kmpc_fork_call")) {
+			Microtask *parallel_region = new Microtask(call);
+			return handle_fork_call(parallel_region, send_call);
 		} else {
-			errs()
-					<< "Support for the analysis of this instruction is not implemented yet\n";
-			to_handle->print(errs());
-			errs() << "\n";
+			return handle_modification_location(send_call, latest_modification);
 		}
+	} else {
 
-		//TODO handle other instructions such as
-		// GEP
-		// cast
-
-		// remove erase the analyzed instruction
-		to_analyze.erase(
-				std::remove(to_analyze.begin(), to_analyze.end(), to_handle),
-				to_analyze.end());
-		if (to_analyze.size() > 0) {
-			to_handle = get_last_instruction(to_analyze);
-		} else {
-			to_handle = nullptr;
-			// nothing more to do
-			// no modification detected so far
-			return false;
-		}
+		return handle_modification_location(send_call, latest_modification);
 
 	}
-
-	assert(false && "Analysis should be completed before");
-	return false;
 }
 
