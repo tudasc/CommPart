@@ -765,10 +765,12 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 
 	auto *insert_point = parallel_region->get_fork_call();
 
-	IRBuilder<> builder(insert_point);
-	// MPI_Request
+	IRBuilder<> builder(insert_point->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+	// MPI_Request at the start of the func in the first block
 	Value *request_ptr = builder.CreateAlloca(mpi_func->mpix_request_type,
 			nullptr, "mpix_request");
+
+
 
 	add_partition_init_call(insert_point, request_ptr, parallel_region,
 			send_call, min_adress, max_adress);
