@@ -87,7 +87,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 				return get_value_in_serial_part(v, parallel_region);
 			});
 
-	assert (operands_in_serial.size() == in_parallel->getNumOperands());
+	assert(operands_in_serial.size() == in_parallel->getNumOperands());
 
 	// found all operands in serial?
 	if (!std::all_of(operands_in_serial.begin(), operands_in_serial.end(),
@@ -120,7 +120,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 
 	// after the last operand
 
-	insert_point=insert_point->getNextNode();
+	insert_point = insert_point->getNextNode();
 	if (insert_point == nullptr) {
 		// if unknown: use the fork call
 		insert_point = parallel_region->get_fork_call();
@@ -131,6 +131,62 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 	return builder.CreateNAryOp(in_parallel->getOpcode(), operands_in_serial,
 			in_parallel->getName());
 
+	return nullptr;
+}
+
+Value* get_value_stored_before_parallel_region(Value *ptr_in_serial,
+		Microtask *parallel_region) {
+	//errs() << "get value of Firstprivate var\n";
+
+	assert(ptr_in_serial != nullptr);
+
+	auto *PDtree = analysis_results->getPostDomTree(
+			parallel_region->get_fork_call()->getFunction());
+	auto *Dtree = analysis_results->getDomTree(
+			parallel_region->get_fork_call()->getFunction());
+
+	// we only need to take care about stored before the fork call
+	std::vector<Instruction*> store_list;
+	for (auto *u : ptr_in_serial->users()) {
+		if (auto *i = dyn_cast<Instruction>(u)) {
+			// if not proven after fork
+			if (!Dtree->dominates(parallel_region->get_fork_call(), i)
+					&& !PDtree->dominates(parallel_region->get_fork_call(),
+							i)) {
+				store_list.push_back(i);
+			}
+		}
+	}
+
+	if (store_list.size() != 0) {
+		auto *last_i = get_last_instruction(store_list);
+
+		if (auto *last_store = dyn_cast_or_null<StoreInst>(last_i)) {
+			if (last_store->getPointerOperand() == ptr_in_serial) {
+
+				//errs() << "Fund value of var\n";
+				//last_store->dump();
+
+				return last_store->getValueOperand();
+
+			} else {
+				assert(
+						false
+								&& "detected something that is currently not supported\n");
+				return nullptr;
+				//TODO handle this case?
+			}
+
+		} else {
+			errs() << "Last operation to shared var is not a store:";
+			last_i->dump();
+			return nullptr;
+		}
+	} else {
+		// not found uses of this pointer?
+		assert(false && "Error: not find uses of ptr");
+	}
+// not found
 	return nullptr;
 }
 
@@ -162,60 +218,13 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 
 				Value *ptr_in_serial = parallel_region->get_value_in_main(
 						ptr_arg);
-				assert(ptr_in_serial != nullptr);
-
-				auto *PDtree = analysis_results->getPostDomTree(
-						parallel_region->get_fork_call()->getFunction());
-				auto *Dtree = analysis_results->getDomTree(
-						parallel_region->get_fork_call()->getFunction());
-
-
-				// we only need to take care about stored before the fork call
-				std::vector<Instruction*> store_list;
-				for (auto *u : ptr_in_serial->users()) {
-					if (auto *i = dyn_cast<Instruction>(u)) {
-						// if not proven after fork
-						if (!Dtree->dominates(parallel_region->get_fork_call(),
-								i)
-								&& !PDtree->dominates(
-										parallel_region->get_fork_call(), i)) {
-							store_list.push_back(i);
-						}
-					}
-				}
-
-
-
-				if (store_list.size() != 0) {
-					auto *last_i = get_last_instruction(store_list);
-
-					if (auto *last_store = dyn_cast_or_null<StoreInst>(
-							last_i)) {
-						if (last_store->getPointerOperand() == ptr_in_serial) {
-							return last_store->getValueOperand();
-
-						} else {
-							assert(
-									false
-											&& "detected something that is currently not supported\n");
-							return nullptr;
-							//TODO handle this case?
-						}
-
-					} else {
-						errs()
-								<< "Last operation to shared var is not a store:";
-						last_i->dump();
-						return nullptr;
-					}
-				} else {
-					// not found uses of this pointer?
-					assert(false && "Error: not find uses of ptr");
-				}
+				return get_value_stored_before_parallel_region(ptr_in_serial,
+						parallel_region);
 
 			} else {
 				errs()
-						<< "Fund that the message partitioning depend on a shared variablle.\n Try to use firstprivate clause wherever possible to enable message partitioning\n";
+						<< "Fund that the message partitioning depend on a shared variablle.\n"
+						<< " Try to use firstprivate clause wherever possible to enable message partitioning\n";
 				return nullptr;
 			}
 
@@ -234,7 +243,6 @@ Value* get_value_in_serial_part_impl(Value *in_parallel,
 	if (auto *ptr_arg = dyn_cast<AllocaInst>(in_parallel)) {
 
 		// e.g. the values set by the for_init call
-
 		// as we want the value outside of the omp parallel we just need to get the first value stored
 
 		Instruction *next_inst = ptr_arg->getNextNode();
