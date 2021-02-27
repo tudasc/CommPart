@@ -183,6 +183,7 @@ void move_init_and_free_call(CallInst *init_call, CallInst *free_call,
 }
 
 //TODO implement
+// TODO add call to this in insert_partitioning
 // move wait call as much "down" as possible ==> greater overlap
 void move_wait_call() {
 
@@ -192,10 +193,6 @@ void move_wait_call() {
 // move wait call as much "up" as possible ==> greater overlap
 void move_start_call() {
 	errs() << "Extending the non-blocking window is not implemented Yet\n";
-}
-
-void move_request_free_call() {
-
 }
 
 //TODO is there a better option to do it, it seems that this only reverse engenieer the analysis done by llvm
