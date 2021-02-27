@@ -24,7 +24,6 @@ llvm::Instruction* get_last_instruction(std::vector<llvm::Instruction*> inst_lis
 // assert fail if no order between A and B can be proven
 bool is_instruction_before(llvm::Instruction *A, llvm::Instruction *B);
 
-
 /**
  * Searches the Function for all uses of instructions of type T and returns them in a
  * vector

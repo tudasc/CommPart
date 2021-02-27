@@ -101,17 +101,51 @@ size_t get_size_in_Byte(llvm::Module &M, llvm::Type *type) {
 	return TD->getTypeAllocSize(type);
 }
 
-// True if A is proven before B
-//  False if B is proven before A
-// assert fail if no order between A and B can be proven
-bool is_instruction_before(Instruction *A, Instruction *B) {
+// return A if A is proven before B
+// return B if B is proven before A
+// nullptr other wise
+// A is considered before B if it either dominates B or is postdominated by B
+// meaning that in every path if A and B are present A must come before B
+Instruction* get_first_instruction(Instruction *A, Instruction *B) {
 	auto *Pdomtree = analysis_results->getPostDomTree(A->getFunction());
 	auto *Domtree = analysis_results->getDomTree(A->getFunction());
 
 	if (Pdomtree->dominates(B, A) || Domtree->dominates(A, B)) {
-		return true;
+		return A;
+	} else if (Pdomtree->dominates(A, B) || Domtree->dominates(B, A)) {
+		return B;
 	} else {
-		assert(Pdomtree->dominates(A,B) || Domtree->dominates(B,A));
+
+		return nullptr;
+	}
+}
+
+// True if A is proven before B
+//  False if B is proven before A
+// assert fail if no order between A and B can be proven
+bool is_instruction_before(Instruction *A, Instruction *B) {
+	auto *first = get_first_instruction(A, B);
+	if (first == A) {
+		return true;
+	} else if (first == B) {
+		return false;
+	} else {
+Debug(
+	auto *Pdomtree = analysis_results->getPostDomTree(A->getFunction());
+	auto *Domtree = analysis_results->getDomTree(A->getFunction());
+	errs() << "could not analyze relation between  A and B\n";
+	A->dump();
+	B->dump();
+
+	errs() << "A dominates B ?" << Domtree->dominates(A, B) << "\n";
+	errs() << "B dominates A ?" << Domtree->dominates(B, A) << "\n";
+	errs() << "A Postdominates B ?" << Pdomtree->dominates(A, B) << "\n";
+	errs() << "B Postdominates A ?" << Pdomtree->dominates(B, A) << "\n";
+
+	errs() << "Dom Tree verify?" << Domtree->verify() << "\n";
+	A->getFunction()->dump();
+	)
+															assert(false);
 		return false;
 	}
 
@@ -133,18 +167,15 @@ Instruction* get_last_instruction(std::vector<Instruction*> inst_list) {
 
 	Instruction *current_instruction = inst_list[0];
 	bool is_viable = true;
-	auto *Pdomtree = analysis_results->getPostDomTree(
-			current_instruction->getFunction());
-	auto *Domtree = analysis_results->getDomTree(
-			current_instruction->getFunction());
 
-// first entry is current candidate
+// first entry is current candidate therefore begin at +1
 	for (auto it = inst_list.begin() + 1; it < inst_list.end(); ++it) {
-		if (Pdomtree->dominates(*it, current_instruction)) {
-			current_instruction = *it;
-		} else if (!Pdomtree->dominates(current_instruction, *it)) {
+		auto *first_inst = get_first_instruction(current_instruction, *it);
+		if (first_inst == nullptr) {
 			// no instruction dominates the other
 			is_viable = false;
+		} else if (first_inst == current_instruction) {
+			current_instruction = *it;
 		}
 	}
 
@@ -156,13 +187,11 @@ Instruction* get_last_instruction(std::vector<Instruction*> inst_list) {
 		// therefore we need to recheck
 		for (auto *i : inst_list) {
 			if (i != current_instruction
-					&& !Domtree->dominates(current_instruction, i)
-					&& !Pdomtree->dominates(current_instruction, i)) {
+					&& current_instruction
+							!= get_first_instruction(current_instruction, i)) {
 				// found a non dominate relation: abort
-				Debug(
-						errs() << "could not analyze relation between \n";
-						current_instruction->dump();
-						i->dump();)
+
+				errs() << "Error in finding the first instruction \n";
 
 				return nullptr;
 			}
