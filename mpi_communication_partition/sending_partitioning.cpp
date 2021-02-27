@@ -36,6 +36,10 @@ inline bool should_be_excluded(User *u,
 			u) != exclude_instructions.end());
 }
 
+//TODO
+// if no nocapture is given in a call, we should not move around this instructions anywhere!
+// we cann not be shure what other functions do
+//TODO we neet to check this nocapture attribute for ALL function call, even if we previously found another store as last point of modification!
 bool should_function_call_be_considered_modification(Value *ptr,
 		CallInst *call) {
 	assert(
@@ -63,6 +67,13 @@ bool should_function_call_be_considered_modification(Value *ptr,
 		Microtask *parallel_region = new Microtask(call);
 
 		auto *buffer_ptr = parallel_region->get_value_in_mikrotask(ptr);
+
+		if (!buffer_ptr->hasNoCaptureAttr()) {
+			assert(
+					false
+							&& "Function call captures the send buffer, Abort analysis\n");
+			return true;
+		}
 
 		if (buffer_ptr->hasNoCaptureAttr()
 				&& buffer_ptr->hasAttribute(Attribute::ReadOnly)) {
@@ -112,35 +123,20 @@ bool should_function_call_be_considered_modification(Value *ptr,
 
 }
 
-Instruction* get_latest_modification_of_pointer(Value *ptr,
-		Instruction *search_before,
+// returns most latest ptr modification
+// or nullptr if no found
+Instruction* search_for_pointer_modification(Value *ptr,
+		std::vector<Instruction*> to_analyze,
 		const std::vector<Instruction*> exclude_instructions) {
-	// will yield the latest modification = write to ptr
-	// before the instruction in search_before, but exclude exclude_instructions --> e.g. instr that where already handled
-
-	// gather all uses of this buffer
-	LoopInfo *linfo = analysis_results->getLoopInfo(
-			search_before->getParent()->getParent());
-	DominatorTree *dt = analysis_results->getDomTree(
-			search_before->getParent()->getParent());
-
-	std::vector<Instruction*> to_analyze;
-	for (auto *u : ptr->users()) {
-		if (!should_be_excluded(u, exclude_instructions)) {
-
-			if (auto *inst = dyn_cast<Instruction>(u)) {
-
-				if (llvm::isPotentiallyReachable(inst, search_before, nullptr,
-						dt, linfo)) {
-					// only then it may have an effect
-					to_analyze.push_back(inst);
-				}
-			}
-		}
-	}
 
 	Instruction *current_instruction = get_last_instruction(to_analyze);
 	while (current_instruction != nullptr) {
+
+		// otherwise it should not be included in to_analyze
+		assert(
+				std::find(exclude_instructions.begin(),
+						exclude_instructions.end(), current_instruction)
+						== exclude_instructions.end());
 
 		if (auto *store = dyn_cast<StoreInst>(current_instruction)) {
 			if (ptr == store->getValueOperand()) {
@@ -167,11 +163,15 @@ Instruction* get_latest_modification_of_pointer(Value *ptr,
 			if (should_function_call_be_considered_modification(ptr, call)) {
 				return call;
 			}
+		} else if (auto *load = dyn_cast<LoadInst>(current_instruction)) {
+			assert(load->getPointerOperand() == ptr);
+			// loading from ptr does not modify--> nothing to do
 		} else {
 			errs()
 					<< "Support for the analysis of this instruction is not implemented yet\n";
 			current_instruction->print(errs());
 			errs() << "\n";
+			return current_instruction;
 		}
 
 		//TODO handle other instructions such as
@@ -188,13 +188,93 @@ Instruction* get_latest_modification_of_pointer(Value *ptr,
 			current_instruction = nullptr;
 			// nothing more to do
 			// no modification detected so far
-			errs() << "No pointer modification detected so far\n";
+			//errs() << "No pointer modification detected so far\n";
 			return nullptr;
 		}
 
 	}
 	assert(false && "SHOULD NOT REACH THIS");
 	return nullptr;
+
+}
+
+// true if the location pointed by ptr can be considered loop invariant if exclude_instructions are ignored
+// false if unshure
+bool is_location_loop_invariant(Value *ptr, Loop *loop,
+		const std::vector<Instruction*> exclude_instructions) {
+
+	if (!loop->isLoopInvariant(ptr)) {
+		// ptr not loopp invariant: analysis makes no sense
+		return false;
+	}
+	std::vector<Instruction*> to_analyze;
+	for (auto *u : ptr->users()) {
+		if (auto *inst = dyn_cast<Instruction>(u)) {
+			if ((!(std::find(exclude_instructions.begin(),
+					exclude_instructions.end(), inst)
+					!= exclude_instructions.end())) && loop->contains(inst)) {
+				// not ignored and in loop
+				to_analyze.push_back(inst);
+
+			}
+		}
+
+	}
+
+	// if nullptr then no modification found and retrun true
+	return (nullptr
+			== search_for_pointer_modification(ptr, to_analyze,
+					exclude_instructions));
+}
+
+// will yield the latest modification = write to ptr
+// before the instruction in search_before, but exclude exclude_instructions --> e.g. instr that where already handled
+// if search_before is in a loop, will move out of the loop, if determined the load is loop invariant if exclude_instructions are ignored
+Instruction* get_latest_modification_of_pointer(Value *ptr,
+		Instruction *search_before,
+		const std::vector<Instruction*> exclude_instructions) {
+
+	// gather all uses of this buffer
+	LoopInfo *linfo = analysis_results->getLoopInfo(
+			search_before->getParent()->getParent());
+	DominatorTree *dt = analysis_results->getDomTree(
+			search_before->getParent()->getParent());
+
+	std::vector<Instruction*> to_analyze;
+	for (auto *u : ptr->users()) {
+		if (!should_be_excluded(u, exclude_instructions)) {
+
+			if (auto *inst = dyn_cast<Instruction>(u)) {
+
+				if (llvm::isPotentiallyReachable(inst, search_before, nullptr,
+						dt, linfo)) {
+					// only then it may have an effect
+					to_analyze.push_back(inst);
+				}
+			}
+		}
+	}
+
+	auto *modification_point = search_for_pointer_modification(ptr, to_analyze,
+			exclude_instructions);
+	if (auto *loop = linfo->getLoopFor(search_before->getParent())) {
+		if (!is_location_loop_invariant(ptr, loop, exclude_instructions)) {
+			if (!loop->contains(modification_point)) {
+				// meaning that modification occurs after search before in the loop
+				//TODO can we move the instruction to the beginning of a loop body?
+
+				return search_before->getPrevNode();//to be shure: suggest no movement
+			}
+		}
+	}
+
+	if (modification_point == nullptr) {
+		// first instruction of function if not modified within the function
+		return search_before->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
+
+	}
+
+	return modification_point;
 
 }
 

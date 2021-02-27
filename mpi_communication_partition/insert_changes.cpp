@@ -30,17 +30,23 @@
 
 using namespace llvm;
 
+//TODO evaluate this implementation
+// is his enough to move code out of loop if invariant?
 Instruction* move_to_maximum_upwards_point(Instruction *inst,
 		std::vector<Instruction*> ignore) {
 
 	assert(inst != nullptr);
 
-	//TODO how to move out pf loop in this design?
+	//TODO how to move out ptr loop in this design?
 
-	// each param seperately and then ask for if loop of patiition call is still same
+	// each param seperately and then ask for if loop of patition call is still same
 
 	if (auto *call = dyn_cast<CallInst>(inst)) {
-		errs() << "will not move call instruction\n";
+		Debug(
+				errs() << "will not move call instruction\n";
+				call->dump();
+		)
+		return inst;
 	} else if (auto *load = dyn_cast<LoadInst>(inst)) {
 
 		auto *move_after = get_latest_modification_of_pointer(
@@ -48,7 +54,8 @@ Instruction* move_to_maximum_upwards_point(Instruction *inst,
 		inst->moveAfter(move_after);
 		return inst;
 
-	} else if (inst->isUnaryOp()) {
+		// why have a cast or an Sext not inst->isUnaryOp()==true??
+	} else if (inst->isUnaryOp() || isa<UnaryInstruction>(inst)) {
 
 		auto *operand = inst->getOperand(0);
 		if (auto *operand_inst = dyn_cast<Instruction>(operand)) {
@@ -57,7 +64,7 @@ Instruction* move_to_maximum_upwards_point(Instruction *inst,
 			inst->moveAfter(move_after);
 			return inst;
 		} else {
-			// constat or parameter:
+			// constant or parameter:
 			//can move at the beginning of func
 			auto *move_after =
 					inst->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
@@ -83,12 +90,17 @@ Instruction* move_to_maximum_upwards_point(Instruction *inst,
 			}
 		}
 		inst->moveAfter(move_after);
+		return inst;
 
 	} else {
-		errs() << "no analysis for moving (will not move to extend nonblocking window):\n";
+		errs()
+				<< "no analysis for moving (will not move to extend nonblocking window):\n";
 		inst->dump();
 		return inst;
 	}
+
+	assert(false && "SHOULD NEVER REACH THIS");
+	return nullptr;
 
 }
 
@@ -104,10 +116,8 @@ void move_init_and_free_call(CallInst *init_call, CallInst *free_call,
 	Instruction *maximum_upwards_point =
 			init_call->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
 
-// no need to ignofe free call, it will not interfere with our analysis
+// no need to ignore free call, it will not interfere with our analysis
 	std::vector<Instruction*> ignore = { fork_call, init_call };
-
-	bool all_args_loop_invariant = true;
 
 // check for the maximum upwards point for each of the arguments
 	for (unsigned int i = 0; i < init_call->getNumArgOperands(); ++i) {
@@ -118,9 +128,48 @@ void move_init_and_free_call(CallInst *init_call, CallInst *free_call,
 			if (auto *arg = dyn_cast<Instruction>(
 					init_call->getArgOperand(i))) {
 
+				auto *moved_to = move_to_maximum_upwards_point(arg, ignore);
+
+				if (is_instruction_before(maximum_upwards_point, moved_to)) {
+					maximum_upwards_point = moved_to;
+				}
+
 			}
 		}
 	}
+
+	// not before MPI) init though
+	for (auto *u : mpi_func->mpi_init->users()) {
+		if (auto *c = dyn_cast<CallInst>(u)) {
+			if (c->getFunction() == init_call->getFunction()) {
+				if (is_instruction_before(maximum_upwards_point, c)) {
+					maximum_upwards_point = c;
+				}
+			}
+		}
+	}
+
+	auto *linfo = analysis_results->getLoopInfo(init_call->getFunction());
+	if (auto *loop = linfo->getLoopFor(init_call->getParent())) {
+
+		// -1 as we move call to loop exit block of inner loop
+		int moved_up_loop_depth = linfo->getLoopDepth(init_call->getParent())
+				- linfo->getLoopDepth(maximum_upwards_point->getParent() - 1);
+
+		if (moved_up_loop_depth > 0) {
+			auto *loop_to_move = loop;
+			for (int i = 0; i < moved_up_loop_depth; ++i) {
+				loop_to_move = loop->getParentLoop();
+			}
+			// move call to loop exit block
+
+			assert(loop_to_move != nullptr);
+			free_call->moveAfter(
+					loop_to_move->getExitBlock()->getFirstNonPHIOrDbgOrLifetime());
+
+		}
+	}
+	init_call->moveAfter(maximum_upwards_point);
 
 //vorgehen:
 //für jedes arg: den maximum upwards point bestimmen und die instr entsprechend moven --> keine änderung an semantik
@@ -700,7 +749,7 @@ void add_partition_signoff_call(ValueToValueMapTy &VMap,
 			request, omp_lb, omp_ub });
 }
 
-void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
+CallInst* add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 		Microtask *parallel_region, CallInst *send_call,
 		const SCEVAddRecExpr *min_adress, const SCEVAddRecExpr *max_adress) {
 
@@ -783,8 +832,9 @@ void add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 //errs() << "Collected all Values: insert partitioning call\n";
 	IRBuilder<> builder(insert_point);
 
-	builder.CreateCall(mpi_func->partition_sending_op, argument_list,
-			"partitions");
+	return cast<CallInst>(
+			builder.CreateCall(mpi_func->partition_sending_op, argument_list,
+					"partitions"));
 }
 
 CallInst* replace_old_send_with_wait(CallInst *send_call, Value *request_ptr) {
@@ -891,13 +941,14 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 	Value *request_ptr = builder.CreateAlloca(mpi_func->mpix_request_type,
 			nullptr, "mpix_request");
 
-	add_partition_init_call(insert_point, request_ptr, parallel_region,
-			send_call, min_adress, max_adress);
+	auto *partition_init_call = add_partition_init_call(insert_point,
+			request_ptr, parallel_region, send_call, min_adress, max_adress);
 
 // need to reset insert point if code was inserted before insert point but after position of builder
 	builder.SetInsertPoint(insert_point);
 // start the communication
-	builder.CreateCall(mpi_func->mpix_Start, { request_ptr });
+	CallInst *start_call = cast<CallInst>(
+			builder.CreateCall(mpi_func->mpix_Start, { request_ptr }));
 
 	auto *new_fork_call = insert_new_fork_call(insert_point, parallel_region,
 			new_parallel_function, request_ptr);
@@ -921,7 +972,13 @@ bool insert_partitioning(Microtask *parallel_region, CallInst *send_call,
 
 	auto *wait_call = replace_old_send_with_wait(send_call, request_ptr);
 
-	insert_request_free(wait_call->getNextNode(), request_ptr);
+	auto *request_free_call = insert_request_free(wait_call->getNextNode(),
+			request_ptr);
+
+	move_init_and_free_call(partition_init_call, request_free_call,
+			new_fork_call);
+
+	assert(is_instruction_before(partition_init_call, start_call));
 
 	return true;
 }
