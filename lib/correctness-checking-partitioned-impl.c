@@ -11,6 +11,9 @@ int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
 		MPI_Datatype datatype, int dest, int tag, MPI_Comm comm, MPI_Info info,
 		MPIX_Request *request) {
 
+	// some information set by_partition_ sending_op if needed, init it with 0
+	memset(request, 0, sizeof(MPIX_Request));
+
 	// init request
 	request->buf_start = buf;
 	MPI_Aint size;
@@ -23,6 +26,8 @@ int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
 			request->partition_length_bytes * request->partition_count,
 			SEND_BLOCK_STRING);
 
+
+
 	// init MPI
 	return MPI_Send_init(buf, count * partitions, datatype, dest, tag, comm,
 			&request->request);
@@ -31,6 +36,9 @@ int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
 int MPIX_Precv_init(void *buf, int partitions, MPI_Count count,
 		MPI_Datatype datatype, int dest, int tag, MPI_Comm comm, MPI_Info info,
 		MPIX_Request *request) {
+
+	// some information set by_partition_ sending_op if needed, init it with 0
+	memset(request, 0, sizeof(MPIX_Request));
 	// init request
 	request->buf_start = buf;
 	MPI_Aint size;
