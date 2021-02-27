@@ -159,9 +159,6 @@ int signoff_partitions_after_loop_iter(MPIX_Request *request,
 		long min_adress = request->A_min * min_iter + request->B_min;
 		long max_adress = request->A_max * max_iter + request->B_max;
 
-		MPI_Aint type_extned;
-		MPI_Type_extent(request->datatype, &type_extned);
-
 		//minimum_partition to sign off
 		int min_part_num = (min_adress - (long) request->buf_start)
 				/ request->partition_length_bytes;
@@ -392,18 +389,15 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 	assert(A_min > 0 && "Decrementing loops not supported yet");
 	assert(A_max > 0 && "Decrementing loops not supported yet");
 
-	request->A_max = A_max;
-	request->B_max = B_max;
-	request->A_min = A_min;
-	request->B_min = B_min;
-	request->datatype = datatype;
+	MPI_Aint type_extned;
+	MPI_Type_extent(datatype, &type_extned);
+
 
 	void *chunk_access_start;
 	unsigned long chunk_access_length;
 	long chunk_access_stride;	//  may be negative! == overlapping access
 
-	MPI_Aint type_extned;
-	MPI_Type_extent(datatype, &type_extned);
+
 
 	long sending_size = type_extned * count;
 
@@ -426,6 +420,11 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 		MPIX_Psend_init(buf, partitions, count, datatype, dest, tag, comm,
 		MPI_INFO_NULL, request);
+		request->A_max = A_max;
+		request->B_max = B_max;
+		request->A_min = A_min;
+		request->B_min = B_min;
+		//request->type_extend = type_extned;
 
 	} else {
 
@@ -482,6 +481,11 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		MPIX_Psend_init(buf, partitions, valid_partition_size_datamembers,
 				datatype, dest, tag, comm,
 				MPI_INFO_NULL, request);
+		request->A_max = A_max;
+		request->B_max = B_max;
+		request->A_min = A_min;
+		request->B_min = B_min;
+		//request->type_extend = type_extned;
 
 		// calculate local overlap
 		//TODO is there a better way than calculating it for each partition?

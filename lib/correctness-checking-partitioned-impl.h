@@ -23,7 +23,7 @@ typedef struct {
   long B_min;
   long A_max;
   long B_max;
-  MPI_Datatype datatype;
+  //MPI_Aint type_extend; // not needed anymore
 
 } MPIX_Request;
 
