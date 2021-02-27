@@ -156,9 +156,10 @@ void move_init_and_free_call(CallInst *init_call, CallInst *free_call,
 		int moved_up_loop_depth = linfo->getLoopDepth(init_call->getParent())
 				- linfo->getLoopDepth(maximum_upwards_point->getParent() - 1);
 
+		Debug(errs() << "moved_up_loop_depth: " << moved_up_loop_depth <<"\n";)
 		if (moved_up_loop_depth > 0) {
 			auto *loop_to_move = loop;
-			for (int i = 0; i < moved_up_loop_depth; ++i) {
+			for (int i = 0; i < moved_up_loop_depth-1; ++i) {
 				loop_to_move = loop->getParentLoop();
 			}
 			// move call to loop exit block
