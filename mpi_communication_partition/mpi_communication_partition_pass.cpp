@@ -164,8 +164,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		//M.dump();
 
 		// only need to dump the relevant part
-		M.getFunction("main")->dump();
 		M.getFunction(".omp_outlined.")->dump();
+		M.getFunction("main")->dump();
 		M.getFunction(".omp_outlined._p")->dump();
 
 		bool broken_dbg_info;
