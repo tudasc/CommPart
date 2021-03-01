@@ -212,16 +212,10 @@ Instruction* search_for_pointer_modification(Value *ptr,
 				// this will lead to false positives
 				//but there are not much meaningful uses of this anyway
 
-				for (auto *u : store->getPointerOperand()->users()) {
-					if (!should_be_excluded(u, exclude_instructions)
-							&& u != store) {
-
-						if (auto *i = dyn_cast<Instruction>(u)) {
-							to_analyze.push_back(i);
-
-						}
-					}
-				}
+				modification_points.push_back(
+						get_latest_modification_of_pointer(
+								store->getPointerOperand(), search_before,
+								exclude_instructions));
 			} else {
 				assert(ptr == store->getPointerOperand());
 				modification_points.push_back(store);
@@ -274,7 +268,7 @@ Instruction* search_for_pointer_modification(Value *ptr,
 			// nothing more to do, analyzed all possible modification points
 
 			// there may be nullptrs in it
-			to_analyze.erase(
+			modification_points.erase(
 					std::remove(modification_points.begin(),
 							modification_points.end(), nullptr),
 					modification_points.end());
@@ -288,10 +282,9 @@ Instruction* search_for_pointer_modification(Value *ptr,
 	}
 	errs()
 			<< "No pointer modification detected so far, should return earlier!\n To analyze:\n";
-	for (auto* i : to_analyze){
+	for (auto *i : to_analyze) {
 		i->dump();
 	}
-
 
 	assert(false && "SHOULD NOT REACH THIS");
 	return nullptr;
@@ -321,7 +314,7 @@ bool is_location_loop_invariant(Value *ptr, Loop *loop,
 
 	}
 
-	// if nullptr then no modification found and retrun true
+// if nullptr then no modification found and retrun true
 	return (nullptr
 			== search_for_pointer_modification(ptr, to_analyze, nullptr,
 					exclude_instructions));
