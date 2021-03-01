@@ -600,6 +600,9 @@ bool handle_modification_location(CallInst *send_call,
 				<< "Found opportunity to increase the non-blocking window of send call\n";
 		send_call->print(errs());
 		errs()
+				<< "\nlastly modified at\n";
+		last_modification->print(errs());
+		errs()
 				<< "\n Maybe extending the non-blocking window will be part of a future version";
 
 	}
