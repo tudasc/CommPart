@@ -158,20 +158,46 @@ std::vector<Instruction*> get_ptr_usages(Value *ptr, Instruction *search_before,
 	return to_analyze;
 }
 
+//TODO refactoring so that default values are set instead of voerloading?
+Instruction* search_for_pointer_modification(Value *ptr,
+		std::vector<Instruction*> to_analyze, Instruction *search_before,
+		const std::vector<Instruction*> exclude_instructions);
+
+Instruction* search_for_pointer_modification(Value *ptr,
+		std::vector<Instruction*> to_analyze,
+		const std::vector<Instruction*> exclude_instructions) {
+	return search_for_pointer_modification(ptr, to_analyze, nullptr,
+			exclude_instructions);
+}
+
+Instruction* search_for_pointer_modification(Value *ptr,
+		Instruction *search_before,
+		const std::vector<Instruction*> exclude_instructions) {
+	std::vector<Instruction*> to_analyze;
+	return search_for_pointer_modification(ptr, to_analyze, search_before,
+			exclude_instructions);
+}
+
 // returns most latest ptr modification
 // or nullptr if no found
+// to_analyze may be empty than use all usages of ptr before search_before
 // search_before may be nullptr
 Instruction* search_for_pointer_modification(Value *ptr,
 		std::vector<Instruction*> to_analyze, Instruction *search_before,
 		const std::vector<Instruction*> exclude_instructions) {
 
+	if (to_analyze.size() == 0) {
+		to_analyze = get_ptr_usages(ptr, search_before, exclude_instructions);
+	}
+	// still no usages:
+	if (to_analyze.size() == 0) {
+		return nullptr;
+	}
+
 	Instruction *current_instruction = get_last_instruction(to_analyze);
 
 	std::vector<Instruction*> modification_points;
 
-	if (to_analyze.size() == 0) {
-		return nullptr;
-	}
 	while (current_instruction != nullptr) {
 
 		// otherwise it should not be included in to_analyze
@@ -212,7 +238,7 @@ Instruction* search_for_pointer_modification(Value *ptr,
 		} else if (auto *gep = dyn_cast<GetElementPtrInst>(
 				current_instruction)) {
 			modification_points.push_back(
-					get_latest_modification_of_pointer(gep, search_before,
+					search_for_pointer_modification(gep, search_before,
 							exclude_instructions));
 
 		} else if (auto *unary = dyn_cast<UnaryInstruction>(
@@ -223,7 +249,7 @@ Instruction* search_for_pointer_modification(Value *ptr,
 							&& "Cast pointer to non pointer. Analysis of this is not supported ");
 			// get a possible modification point
 			modification_points.push_back(
-					get_latest_modification_of_pointer(unary, search_before,
+					search_for_pointer_modification(unary, search_before,
 							exclude_instructions));
 
 		} else {
@@ -235,13 +261,12 @@ Instruction* search_for_pointer_modification(Value *ptr,
 		}
 
 		//TODO handle other instructions such as
-		// GEP
-		// cast
 
 		// remove erase the analyzed instruction
 		to_analyze.erase(
 				std::remove(to_analyze.begin(), to_analyze.end(),
 						current_instruction), to_analyze.end());
+
 		if (to_analyze.size() > 0) {
 			current_instruction = get_last_instruction(to_analyze);
 		} else {
@@ -250,19 +275,24 @@ Instruction* search_for_pointer_modification(Value *ptr,
 
 			// there may be nullptrs in it
 			to_analyze.erase(
-					std::remove(modification_points.begin(), modification_points.end(),
-							nullptr), modification_points.end());
+					std::remove(modification_points.begin(),
+							modification_points.end(), nullptr),
+					modification_points.end());
 			if (modification_points.size() == 0) {
 				return nullptr;
-			}else{
+			} else {
 				return get_last_instruction(modification_points);
 			}
 		}
 
 	}
 	errs()
-			<< "No pointer modification detected so far, should return earlier!\n";
-	current_instruction->dump();
+			<< "No pointer modification detected so far, should return earlier!\n To analyze:\n";
+	for (auto* i : to_analyze){
+		i->dump();
+	}
+
+
 	assert(false && "SHOULD NOT REACH THIS");
 	return nullptr;
 
