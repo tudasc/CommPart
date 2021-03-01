@@ -284,27 +284,24 @@ int main(int argc, char **argv) {
 		}
 
 		// exchange data with neighbors
-		MPI_Request reqs[4];
-
-		MPI_Irecv(&anew[ind(1, 0)] /* north */, 1, north_south_type, north, 9,
+		MPI_Request reqs[8];
+		MPI_Isend(&anew[ind(1, 1)] /* north */, 1, north_south_type, north, 9,
 				comm, &reqs[0]);
-		MPI_Irecv(&anew[ind(1, by + 1)] /* south */, 1, north_south_type, south,
-				9, comm, &reqs[1]);
-		MPI_Irecv(&anew[ind(bx + 1, 1)] /* west */, 1, east_west_type, east, 9,
+		MPI_Isend(&anew[ind(1, by)] /* south */, 1, north_south_type, south, 9,
+				comm, &reqs[1]);
+		MPI_Isend(&anew[ind(bx, 1)] /* east */, 1, east_west_type, east, 9,
 				comm, &reqs[2]);
+		MPI_Isend(&anew[ind(1, 1)] /* west */, 1, east_west_type, west, 9, comm,
+				&reqs[3]);
+		MPI_Irecv(&anew[ind(1, 0)] /* north */, 1, north_south_type, north, 9,
+				comm, &reqs[4]);
+		MPI_Irecv(&anew[ind(1, by + 1)] /* south */, 1, north_south_type, south,
+				9, comm, &reqs[5]);
+		MPI_Irecv(&anew[ind(bx + 1, 1)] /* west */, 1, east_west_type, east, 9,
+				comm, &reqs[6]);
 		MPI_Irecv(&anew[ind(0, 1)] /* east */, 1, east_west_type, west, 9, comm,
-				&reqs[4]);
-
-		MPI_Send(&anew[ind(1, 1)] /* north */, 1, north_south_type, north, 9,
-				comm);
-		MPI_Send(&anew[ind(1, by)] /* south */, 1, north_south_type, south, 9,
-				comm);
-		MPI_Send(&anew[ind(bx, 1)] /* east */, 1, east_west_type, east, 9,
-				comm);
-		MPI_Send(&anew[ind(1, 1)] /* west */, 1, east_west_type, west, 9, comm
-				);
-
-		MPI_Waitall(4, reqs, MPI_STATUSES_IGNORE);
+				&reqs[7]);
+		MPI_Waitall(8, reqs, MPI_STATUSES_IGNORE);
 
 		// swap arrays
 		tmp = anew;
