@@ -113,6 +113,7 @@ bool should_function_call_be_considered_modification(Value *ptr,
 			// we cannot do any further analysis
 			errs() << "Function " << call->getCalledFunction()->getName()
 					<< " captures the send buffer pointer\n No further analysis possible\n";
+			//assert(false); ??
 			return true;				// no may write
 		}
 	}
@@ -123,13 +124,54 @@ bool should_function_call_be_considered_modification(Value *ptr,
 
 }
 
+// if search_before == nullptr: return all usages of ptr not in exclude_instruction
+std::vector<Instruction*> get_ptr_usages(Value *ptr, Instruction *search_before,
+		const std::vector<Instruction*> exclude_instructions) {
+	assert(ptr != nullptr);
+	assert(search_before != nullptr);
+	// gather all uses of this buffer
+	LoopInfo *linfo = analysis_results->getLoopInfo(
+			search_before->getParent()->getParent());
+	DominatorTree *dt = analysis_results->getDomTree(
+			search_before->getParent()->getParent());
+
+	std::vector<Instruction*> to_analyze;
+	for (auto *u : ptr->users()) {
+		if (!should_be_excluded(u, exclude_instructions)) {
+
+			if (auto *inst = dyn_cast<Instruction>(u)) {
+
+				if (search_before != nullptr) {
+					if (llvm::isPotentiallyReachable(inst, search_before,
+							nullptr, dt, linfo)) {
+						// only then it may have an effect
+						to_analyze.push_back(inst);
+					}
+				} else {
+
+					to_analyze.push_back(inst);
+				}
+
+			}
+		}
+	}
+	return to_analyze;
+}
+
 // returns most latest ptr modification
 // or nullptr if no found
+// search_before may be nullptr
 Instruction* search_for_pointer_modification(Value *ptr,
-		std::vector<Instruction*> to_analyze,
+		std::vector<Instruction*> to_analyze, Instruction *search_before,
 		const std::vector<Instruction*> exclude_instructions) {
 
 	Instruction *current_instruction = get_last_instruction(to_analyze);
+
+	std::vector<Instruction*> modification_points;
+
+	if (to_analyze.size() == 0) {
+		return nullptr;
+	}
 	while (current_instruction != nullptr) {
 
 		// otherwise it should not be included in to_analyze
@@ -156,7 +198,7 @@ Instruction* search_for_pointer_modification(Value *ptr,
 				}
 			} else {
 				assert(ptr == store->getPointerOperand());
-				return store;
+				modification_points.push_back(store);
 			}
 
 		} else if (auto *call = dyn_cast<CallInst>(current_instruction)) {
@@ -166,12 +208,30 @@ Instruction* search_for_pointer_modification(Value *ptr,
 		} else if (auto *load = dyn_cast<LoadInst>(current_instruction)) {
 			assert(load->getPointerOperand() == ptr);
 			// loading from ptr does not modify--> nothing to do
+
+		} else if (auto *gep = dyn_cast<GetElementPtrInst>(
+				current_instruction)) {
+			modification_points.push_back(
+					get_latest_modification_of_pointer(gep, search_before,
+							exclude_instructions));
+
+		} else if (auto *unary = dyn_cast<UnaryInstruction>(
+				current_instruction)) {
+			// such as cast
+			assert(
+					unary->getType()->isPointerTy()
+							&& "Cast pointer to non pointer. Analysis of this is not supported ");
+			// get a possible modification point
+			modification_points.push_back(
+					get_latest_modification_of_pointer(unary, search_before,
+							exclude_instructions));
+
 		} else {
 			errs()
 					<< "Support for the analysis of this instruction is not implemented yet\n";
 			current_instruction->print(errs());
 			errs() << "\n";
-			return current_instruction;
+			modification_points.push_back(current_instruction);
 		}
 
 		//TODO handle other instructions such as
@@ -186,13 +246,23 @@ Instruction* search_for_pointer_modification(Value *ptr,
 			current_instruction = get_last_instruction(to_analyze);
 		} else {
 			current_instruction = nullptr;
-			// nothing more to do
-			// no modification detected so far
-			//errs() << "No pointer modification detected so far\n";
-			return nullptr;
+			// nothing more to do, analyzed all possible modification points
+
+			// there may be nullptrs in it
+			to_analyze.erase(
+					std::remove(modification_points.begin(), modification_points.end(),
+							nullptr), modification_points.end());
+			if (modification_points.size() == 0) {
+				return nullptr;
+			}else{
+				return get_last_instruction(modification_points);
+			}
 		}
 
 	}
+	errs()
+			<< "No pointer modification detected so far, should return earlier!\n";
+	current_instruction->dump();
 	assert(false && "SHOULD NOT REACH THIS");
 	return nullptr;
 
@@ -223,7 +293,7 @@ bool is_location_loop_invariant(Value *ptr, Loop *loop,
 
 	// if nullptr then no modification found and retrun true
 	return (nullptr
-			== search_for_pointer_modification(ptr, to_analyze,
+			== search_for_pointer_modification(ptr, to_analyze, nullptr,
 					exclude_instructions));
 }
 
@@ -234,29 +304,40 @@ Instruction* get_latest_modification_of_pointer(Value *ptr,
 		Instruction *search_before,
 		const std::vector<Instruction*> exclude_instructions) {
 
-	// gather all uses of this buffer
-	LoopInfo *linfo = analysis_results->getLoopInfo(
-			search_before->getParent()->getParent());
-	DominatorTree *dt = analysis_results->getDomTree(
-			search_before->getParent()->getParent());
+	assert(ptr != nullptr);
+	assert(search_before != nullptr);
 
-	std::vector<Instruction*> to_analyze;
-	for (auto *u : ptr->users()) {
-		if (!should_be_excluded(u, exclude_instructions)) {
-
-			if (auto *inst = dyn_cast<Instruction>(u)) {
-
-				if (llvm::isPotentiallyReachable(inst, search_before, nullptr,
-						dt, linfo)) {
-					// only then it may have an effect
-					to_analyze.push_back(inst);
-				}
-			}
-		}
-	}
+	std::vector<Instruction*> to_analyze = get_ptr_usages(ptr, search_before,
+			exclude_instructions);
 
 	auto *modification_point = search_for_pointer_modification(ptr, to_analyze,
-			exclude_instructions);
+			search_before, exclude_instructions);
+
+	if (modification_point == nullptr) {
+
+		if (auto *ptr_as_inst = dyn_cast<Instruction>(ptr)) {
+			//Pointer is the result of an instruction (such as GEP)
+			// need to trace uses of the original pointer
+			if (auto *gep = dyn_cast<GetElementPtrInst>(ptr)) {
+				return get_latest_modification_of_pointer(
+						gep->getPointerOperand(), search_before,
+						exclude_instructions);
+			} else if (auto *unary = dyn_cast<UnaryInstruction>(ptr)) {
+				return get_latest_modification_of_pointer(unary->getOperand(0),
+						search_before, exclude_instructions);
+			} else {
+				errs() << "Analysis of this is not supported Yet\n";
+				ptr_as_inst->dump();
+			}
+		}
+
+		// first instruction of function if not modified within the function
+		return search_before->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
+
+	}
+	LoopInfo *linfo = analysis_results->getLoopInfo(
+			search_before->getParent()->getParent());
+
 	if (auto *loop = linfo->getLoopFor(search_before->getParent())) {
 		if (!is_location_loop_invariant(ptr, loop, exclude_instructions)) {
 			if (!loop->contains(modification_point)) {
@@ -266,12 +347,6 @@ Instruction* get_latest_modification_of_pointer(Value *ptr,
 				return search_before->getPrevNode();//to be shure: suggest no movement
 			}
 		}
-	}
-
-	if (modification_point == nullptr) {
-		// first instruction of function if not modified within the function
-		return search_before->getFunction()->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
-
 	}
 
 	return modification_point;
