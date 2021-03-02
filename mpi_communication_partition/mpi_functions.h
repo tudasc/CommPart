@@ -23,12 +23,8 @@
 
 #include <set>
 
-// global:
-// will be init and destroyed in the Passes runOnModule function (equivalent to
-// main)
-extern struct mpi_functions *mpi_func;
-
-struct mpi_functions {
+class MpiFunctions {
+public:
   llvm::Function *mpi_init = nullptr;
   llvm::Function *mpi_finalize = nullptr;
 
@@ -69,8 +65,8 @@ struct mpi_functions {
   llvm::Function *partition_sending_op = nullptr;
   llvm::Function *signoff_partitions_after_loop_iter = nullptr;
 
-
-
+private:
+  // maybe i cna delete this?
   std::set<llvm::Function *>
       conflicting_functions; // may result in a conflict for msg overtaking
   std::set<llvm::Function *>
@@ -78,20 +74,27 @@ struct mpi_functions {
   std::set<llvm::Function *>
       unimportant_functions; // no implications for msg overtaking
 
+public:
+
   llvm::Type* mpix_request_type = nullptr;
+
+  MpiFunctions(llvm::Module &M);
+  ~MpiFunctions(){};
+
+  bool is_mpi_used();
+
+  bool is_mpi_call(llvm::CallBase *call);
+  bool is_mpi_function(llvm::Function *f);
+
+  std::vector<llvm::Function *> get_send_functions();
+  std::vector<llvm::Function *> get_recv_functions();
+
+  bool is_send_function(llvm::Function *f);
+  bool is_recv_function(llvm::Function *f);
+
 };
 
 // will be managed by main
-extern struct mpi_functions *mpi_func;
-
-struct mpi_functions *get_used_mpi_functions(llvm::Module &M);
-
-bool is_mpi_used(struct mpi_functions *mpi_func);
-
-bool is_mpi_call(llvm::CallBase *call);
-bool is_mpi_function(llvm::Function *f);
-
-bool is_send_function(llvm::Function *f);
-bool is_recv_function(llvm::Function *f);
+extern MpiFunctions *mpi_func;
 
 #endif /* MACH_MPI_FUNCTIONS_H_ */

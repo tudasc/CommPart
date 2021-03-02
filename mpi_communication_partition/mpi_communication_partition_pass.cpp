@@ -84,7 +84,7 @@ using namespace llvm;
 
 RequiredAnalysisResults *analysis_results;
 
-struct mpi_functions *mpi_func;
+MpiFunctions *mpi_func;
 ImplementationSpecifics *mpi_implementation_specifics;
 
 namespace {
@@ -140,8 +140,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 //M.print(errs(), nullptr);
 
-		mpi_func = get_used_mpi_functions(M);
-		if (!is_mpi_used(mpi_func)) {
+		mpi_func = new MpiFunctions(M);
+		if (!mpi_func->is_mpi_used()) {
 			// nothing to do for non mpi applications
 			delete mpi_func;
 			return false;
