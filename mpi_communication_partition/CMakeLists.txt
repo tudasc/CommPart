@@ -16,6 +16,8 @@ add_library(mpi_communication_partition MODULE
     insert_changes.h
     sending_partitioning.h
     sending_partitioning.cpp
+    mpi_analysis.h
+    mpi_analysis.cpp
 )
 
 # if one wants to use mpi
