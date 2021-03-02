@@ -154,8 +154,8 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		mpi_implementation_specifics = new ImplementationSpecifics(M);
 
 // find MPI Send calls
-		if (mpi_func->mpi_send) {
-			for (auto *senders : mpi_func->mpi_send->users()) {
+		for (auto *send_function : mpi_func->get_used_send_functions()) {
+			for (auto *senders : send_function->users()) {
 
 				if (auto *send_call = dyn_cast<CallInst>(senders)) {
 					modification = modification | handle_send_call(send_call);
@@ -163,25 +163,16 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 			}
 		}
-		// same for Isend
-		if (mpi_func->mpi_Isend) {
-			for (auto *senders : mpi_func->mpi_Isend->users()) {
 
-				if (auto *send_call = dyn_cast<CallInst>(senders)) {
-					modification = modification | handle_send_call(send_call);
-				}
-
-			}
-		}
 		//M.dump();
 
 		// only need to dump the relevant part
 
-
-		 M.getFunction(".omp_outlined.")->dump();
-		 M.getFunction("main")->dump();
-		 if (M.getFunction(".omp_outlined._p")!=nullptr){
-		 M.getFunction(".omp_outlined._p")->dump();}
+		M.getFunction(".omp_outlined.")->dump();
+		M.getFunction("main")->dump();
+		if (M.getFunction(".omp_outlined._p") != nullptr) {
+			M.getFunction(".omp_outlined._p")->dump();
+		}
 
 		bool broken_dbg_info;
 		bool module_errors = verifyModule(M, &errs(), &broken_dbg_info);
