@@ -48,6 +48,15 @@ template<class T> std::vector<T*> get_instruction_in_function(
 	return instructions;
 }
 
+template <class T>
+void remove_eraze_nullptr(std::vector<T*> &remove_nulls){
+	remove_nulls.erase(
+			std::remove_if(remove_nulls.begin(),
+					remove_nulls.end(), [](auto *v) {
+						return v == nullptr;
+					}),remove_nulls.end());
+}
+
 //combine std::find_if and std::none_of to write stl-like find_if_exactly_one
 template<class InputIt, class UnaryPredicate>
 InputIt find_if_exactly_one(InputIt first, InputIt last, UnaryPredicate p) {

@@ -277,11 +277,7 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 			});
 
 // remove all nullptrs
-	operands_in_serial_as_instructions.erase(
-			std::remove_if(operands_in_serial_as_instructions.begin(),
-					operands_in_serial_as_instructions.end(), [](auto *v) {
-						return v == nullptr;
-					}),operands_in_serial_as_instructions.end());
+	remove_eraze_nullptr(operands_in_serial_as_instructions);
 
 	Instruction *insert_point = get_last_instruction(
 			operands_in_serial_as_instructions);
