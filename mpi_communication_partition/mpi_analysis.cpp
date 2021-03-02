@@ -179,9 +179,13 @@ std::vector<CallBase*> get_corresponding_wait(CallBase *call) {
 	if (result.empty()) {
 		errs() << "could not determine scope of \n";
 		call->dump();
+		/*
 		errs() << "Assuming it will finish at mpi_finalize.\n"
 				<< "The Analysis result is still valid, although the chance of "
 						"false positives is higher\n";
+						*/
+		// our analysis need to treat it as a blocking op
+		result.push_back(call);
 	}
 
 	// mpi finalize will end all communication nontheles
