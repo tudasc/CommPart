@@ -18,6 +18,7 @@
 #include "debug.h"
 #include "helper.h"
 #include "analysis_results.h"
+#include "mpi_analysis.h"
 #include "Openmp_region.h"
 #include "insert_changes.h"
 #include "mpi_functions.h"
@@ -601,7 +602,9 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 // return ture if change was made to the IR
 bool handle_send_call(CallInst *send_call) {
 //if using e.g. the adress of MPI send as buffer the user is dumb anyway
-	assert(send_call->getCalledFunction() == mpi_func->mpi_send || send_call->getCalledFunction() == mpi_func->mpi_Isend);
+	assert(
+			send_call->getCalledFunction() == mpi_func->mpi_send
+					|| send_call->getCalledFunction() == mpi_func->mpi_Isend);
 	Debug(
 			errs() << "Handle Send call:\n";
 			send_call->print(errs());
@@ -609,7 +612,15 @@ bool handle_send_call(CallInst *send_call) {
 
 	auto *buffer_ptr = send_call->getArgOperand(0);
 
-	std::vector<Instruction*> ignore = { send_call };
+	std::vector<CallBase*> overlapping = find_overlapping_operations(send_call);
+
+	// convert to instruction
+	std::vector<Instruction*> ignore;
+	ignore.reserve(overlapping.size() + 1);
+	std::move(overlapping.begin(), overlapping.end(),
+			std::back_inserter(ignore));
+// and add the send call itself
+	ignore.push_back(send_call);
 
 	Instruction *latest_modification = get_latest_modification_of_pointer(
 			buffer_ptr, send_call, ignore);

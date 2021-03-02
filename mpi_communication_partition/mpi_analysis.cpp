@@ -221,3 +221,57 @@ Instruction* get_local_completion_point(CallBase *mpi_call) {
 	}
 
 }
+
+//TODO if A overlaps B, B overlaps A -> caching the results might be possible to not build the result again and again
+// maybe even an own analysis pass?
+// returns operations that may locally overlap (will not include self)
+std::vector<CallBase*> find_overlapping_operations(CallBase *mpi_call) {
+
+	std::vector<CallBase*> result;
+	auto *completion_point = get_local_completion_point(mpi_call);
+
+	if (mpi_call == completion_point) {
+		// a blocking operation: nothing to do
+		return result;
+	}
+
+	for (auto *mpi_function : mpi_func->get_used_send_and_recv_functions()) {
+		for (auto *u : mpi_function->users()) {
+			if (auto *other_call = dyn_cast<CallBase>(u)) {
+				assert(other_call->getCalledFunction() == mpi_function);
+				auto *other_completion_point = get_local_completion_point(
+						other_call);
+
+				//
+				if (other_completion_point
+						== get_first_instruction(other_completion_point,
+								mpi_call)
+						|| completion_point
+								== get_first_instruction(completion_point,
+										other_call)) {
+					// if one is finished before the other: no overlap
+
+				} else {
+
+					// if it is in between
+					if (nullptr
+							!= get_first_instruction(other_completion_point,
+									mpi_call)
+							|| nullptr
+									!= get_first_instruction(completion_point,
+											other_call)) {
+						// if there is another defined order
+						// overlapping
+						result.push_back(other_call);
+					}
+				}
+
+			}
+		}
+	}
+
+	//TODO this dopes not capture the calls that start before the
+
+	return result;
+
+}
