@@ -614,7 +614,7 @@ bool handle_send_call(CallInst *send_call) {
 
 	std::vector<CallBase*> overlapping = find_overlapping_operations(send_call);
 
-	// convert to instruction
+	// convert to instruction*
 	std::vector<Instruction*> ignore;
 	ignore.reserve(overlapping.size() + 1);
 	std::move(overlapping.begin(), overlapping.end(),
@@ -622,7 +622,7 @@ bool handle_send_call(CallInst *send_call) {
 // and add the send call itself
 	ignore.push_back(send_call);
 
-	Instruction *latest_modification = get_latest_modification_of_pointer(
+Instruction *latest_modification = get_latest_modification_of_pointer(
 			buffer_ptr, send_call, ignore);
 
 	if (auto *call = dyn_cast<CallInst>(latest_modification)) {

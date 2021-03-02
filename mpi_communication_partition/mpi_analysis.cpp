@@ -230,11 +230,6 @@ std::vector<CallBase*> find_overlapping_operations(CallBase *mpi_call) {
 	std::vector<CallBase*> result;
 	auto *completion_point = get_local_completion_point(mpi_call);
 
-	if (mpi_call == completion_point) {
-		// a blocking operation: nothing to do
-		return result;
-	}
-
 	for (auto *mpi_function : mpi_func->get_used_send_and_recv_functions()) {
 		for (auto *u : mpi_function->users()) {
 			if (auto *other_call = dyn_cast<CallBase>(u)) {
@@ -242,7 +237,6 @@ std::vector<CallBase*> find_overlapping_operations(CallBase *mpi_call) {
 				auto *other_completion_point = get_local_completion_point(
 						other_call);
 
-				//
 				if (other_completion_point
 						== get_first_instruction(other_completion_point,
 								mpi_call)
@@ -260,9 +254,11 @@ std::vector<CallBase*> find_overlapping_operations(CallBase *mpi_call) {
 							|| nullptr
 									!= get_first_instruction(completion_point,
 											other_call)) {
-						// if there is another defined order
+						// if there is another defined order:
 						// overlapping
 						result.push_back(other_call);
+					}else{
+						// no defined order: can not prove overlapping
 					}
 				}
 
