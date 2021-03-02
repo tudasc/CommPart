@@ -22,6 +22,9 @@
 #include <vector>
 
 std::vector<llvm::CallBase *> get_corresponding_wait(llvm::CallBase *call);
+//returns the call where the operation is completed locally
+// e.g. the corresponding wait ot the ooperation itself for blocking communication
+llvm::Instruction* get_local_completion_point(llvm::CallBase *mpi_call);
 
 
 #endif /* MPI_COMMUNICATION_PARTITION_MPI_ANALYSIS_H_ */

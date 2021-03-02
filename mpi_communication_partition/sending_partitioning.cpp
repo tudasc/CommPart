@@ -601,7 +601,7 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 // return ture if change was made to the IR
 bool handle_send_call(CallInst *send_call) {
 //if using e.g. the adress of MPI send as buffer the user is dumb anyway
-	assert(send_call->getCalledFunction() == mpi_func->mpi_send);
+	assert(send_call->getCalledFunction() == mpi_func->mpi_send || send_call->getCalledFunction() == mpi_func->mpi_Isend);
 	Debug(
 			errs() << "Handle Send call:\n";
 			send_call->print(errs());

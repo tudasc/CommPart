@@ -20,6 +20,7 @@
 #include "helper.h"
 #include "analysis_results.h"
 #include "mpi_functions.h"
+#include "mpi_analysis.h"
 #include "sending_partitioning.h"
 
 #include "llvm/IR/Instructions.h"
@@ -159,7 +160,7 @@ void move_init_and_free_call(CallInst *init_call, CallInst *free_call,
 		Debug(errs() << "moved_up_loop_depth: " << moved_up_loop_depth <<"\n";)
 		if (moved_up_loop_depth > 0) {
 			auto *loop_to_move = loop;
-			for (int i = 0; i < moved_up_loop_depth-1; ++i) {
+			for (int i = 0; i < moved_up_loop_depth - 1; ++i) {
 				loop_to_move = loop->getParentLoop();
 			}
 			// move call to loop exit block
@@ -599,8 +600,7 @@ bool handle_modification_location(CallInst *send_call,
 		errs()
 				<< "Found opportunity to increase the non-blocking window of send call\n";
 		send_call->print(errs());
-		errs()
-				<< "\nlastly modified at\n";
+		errs() << "\nlastly modified at\n";
 		last_modification->print(errs());
 		errs()
 				<< "\n Maybe extending the non-blocking window will be part of a future version";
@@ -764,7 +764,7 @@ CallInst* add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 //long loop_min, long loop_max)
 // collect all arguments for the partitioned call
 
-// args form original send
+// args from original send
 	Value *buf = send_call->getArgOperand(0);
 	Value *count = send_call->getArgOperand(1);
 	Value *datatype = send_call->getArgOperand(2);
@@ -840,7 +840,9 @@ CallInst* add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 
 CallInst* replace_old_send_with_wait(CallInst *send_call, Value *request_ptr) {
 // now we need to replace the send call with the wait
-	IRBuilder<> builder(send_call);
+
+	Instruction *insert_point = get_local_completion_point(send_call);
+	IRBuilder<> builder(insert_point);
 
 //TODO set status ignore instead?
 
@@ -856,6 +858,16 @@ CallInst* replace_old_send_with_wait(CallInst *send_call, Value *request_ptr) {
 // and remove the old send call
 	send_call->replaceAllUsesWith(new_send_call);
 	send_call->eraseFromParent();
+
+	if (auto *wait_call = dyn_cast<CallInst>(insert_point)) {
+		if (wait_call->getCalledFunction() == mpi_func->mpi_wait) {
+			// we can  not remove a waitall
+			// but waiting for MPI_REQUEST_NULL is OK as well, so no need to change it
+			//TODO we must ensure the request is actually MPI_REQUEST_NULL and not uninitialized!
+			wait_call->replaceAllUsesWith(new_send_call);
+			wait_call->eraseFromParent();
+		}
+	}
 
 	return cast<CallInst>(new_send_call);
 }
