@@ -15,6 +15,7 @@
  */
 
 #include "mpi_functions.h"
+#include "helper.h"
 #include <assert.h>
 
 #include "llvm/IR/InstrTypes.h"
@@ -115,21 +116,32 @@ MpiFunctions::MpiFunctions(llvm::Module &M) {
 
 			//self implemented Partitioned functions
 			// search for either the normal name (C mode) or the mangled name (C++ mode)
-		} else if (f->getName().equals("MPIX_Psend_init")|| f->getName().equals("_Z15MPIX_Psend_initPvixiiiiiP12MPIX_Request")) {
+		} else if (f->getName().equals("MPIX_Psend_init")
+				|| f->getName().equals(
+						"_Z15MPIX_Psend_initPvixiiiiiP12MPIX_Request")) {
 			mpix_Psend_init = f;
-		} else if (f->getName().equals("MPIX_Precv_init")|| f->getName().equals("_Z15MPIX_Precv_initPvixiiiiiP12MPIX_Request")) {
+		} else if (f->getName().equals("MPIX_Precv_init")
+				|| f->getName().equals(
+						"_Z15MPIX_Precv_initPvixiiiiiP12MPIX_Request")) {
 			mpix_Precv_init = f;
-		} else if (f->getName().equals("MPIX_Start")|| f->getName().equals("_Z10MPIX_StartP12MPIX_Request")) {
+		} else if (f->getName().equals("MPIX_Start")
+				|| f->getName().equals("_Z10MPIX_StartP12MPIX_Request")) {
 			mpix_Start = f;
-		} else if (f->getName().equals("MPIX_Wait")|| f->getName().equals("_Z9MPIX_WaitP12MPIX_RequestP10MPI_Status")) {
+		} else if (f->getName().equals("MPIX_Wait")
+				|| f->getName().equals(
+						"_Z9MPIX_WaitP12MPIX_RequestP10MPI_Status")) {
 			mpix_Wait = f;
 
-		} else if (f->getName().equals("MPIX_Pready")|| f->getName().equals("_Z11MPIX_PreadyiP12MPIX_Request")) {
+		} else if (f->getName().equals("MPIX_Pready")
+				|| f->getName().equals("_Z11MPIX_PreadyiP12MPIX_Request")) {
 			mpix_Pready = f;
-		} else if (f->getName().equals("MPIX_Pready_range")|| f->getName().equals("_Z17MPIX_Pready_rangeiiP12MPIX_Request")) {
+		} else if (f->getName().equals("MPIX_Pready_range")
+				|| f->getName().equals(
+						"_Z17MPIX_Pready_rangeiiP12MPIX_Request")) {
 			mpix_Pready_range = f;
 		} else if (f->getName().equals("MPIX_Request_free")
-				|| f->getName().equals("_Z17MPIX_Request_freeP12MPIX_Request")) {
+				|| f->getName().equals(
+						"_Z17MPIX_Request_freeP12MPIX_Request")) {
 			mpix_Request_free = f;
 
 			// library funcs to handle the partitioning
@@ -147,11 +159,9 @@ MpiFunctions::MpiFunctions(llvm::Module &M) {
 
 	//check if all defined functions are present
 	bool all_present = (mpix_Psend_init != nullptr)
-			&& (mpix_Precv_init != nullptr)
-			&& (mpix_Start != nullptr) && (mpix_Wait != nullptr)
-			&& (mpix_Pready != nullptr)
-			&& (mpix_Pready_range != nullptr)
-			&& (mpix_Request_free != nullptr);
+			&& (mpix_Precv_init != nullptr) && (mpix_Start != nullptr)
+			&& (mpix_Wait != nullptr) && (mpix_Pready != nullptr)
+			&& (mpix_Pready_range != nullptr) && (mpix_Request_free != nullptr);
 	assert(
 			partition_sending_op != nullptr
 					&& signoff_partitions_after_loop_iter != nullptr);
@@ -165,6 +175,23 @@ MpiFunctions::MpiFunctions(llvm::Module &M) {
 			mpix_Request_free->getFunctionType()->getParamType(0));
 	mpix_request_type = pointer_t->getElementType();
 	assert(mpix_request_type);
+
+	// fill used _send_functions and used_recv functions
+	_send_functions = { mpi_send, mpi_Bsend, mpi_Ssend, mpi_Rsend, mpi_Isend,
+			mpi_Ibsend, mpi_Irsend, mpi_Issend, mpi_Sendrecv };
+
+	_recv_functions = { mpi_recv, mpi_Irecv,mpi_Sendrecv};
+
+	// not doubling sendrecv
+	_send_recv_functions = { mpi_send, mpi_Bsend, mpi_Ssend, mpi_Rsend, mpi_Isend,
+			mpi_Ibsend, mpi_Irsend, mpi_Issend, mpi_Sendrecv ,mpi_recv, mpi_Irecv};
+
+	remove_eraze_nullptr(_send_functions);
+	remove_eraze_nullptr(_send_recv_functions);
+	remove_eraze_nullptr(_recv_functions);
+
+
+
 }
 
 bool MpiFunctions::is_mpi_used() {
@@ -178,15 +205,12 @@ bool MpiFunctions::is_mpi_used() {
 
 bool MpiFunctions::is_send_function(llvm::Function *f) {
 	assert(f != nullptr);
-	return f == mpi_send || f == mpi_Bsend
-			|| f == mpi_Ssend || f == mpi_Rsend
-			|| f == mpi_Isend || f == mpi_Ibsend
-			|| f == mpi_Irsend || f == mpi_Issend
-			|| f == mpi_Sendrecv;
+	return f == mpi_send || f == mpi_Bsend || f == mpi_Ssend || f == mpi_Rsend
+			|| f == mpi_Isend || f == mpi_Ibsend || f == mpi_Irsend
+			|| f == mpi_Issend || f == mpi_Sendrecv;
 }
 
 bool MpiFunctions::is_recv_function(llvm::Function *f) {
 	assert(f != nullptr);
-	return f == mpi_recv || f == mpi_Irecv
-			|| f == mpi_Sendrecv;
+	return f == mpi_recv || f == mpi_Irecv || f == mpi_Sendrecv;
 }

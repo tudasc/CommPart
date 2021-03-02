@@ -74,6 +74,8 @@ private:
   std::set<llvm::Function *>
       unimportant_functions; // no implications for msg overtaking
 
+
+
 public:
 
   llvm::Type* mpix_request_type = nullptr;
@@ -82,16 +84,25 @@ public:
   ~MpiFunctions(){};
 
   bool is_mpi_used();
-
   bool is_mpi_call(llvm::CallBase *call);
   bool is_mpi_function(llvm::Function *f);
-
-  std::vector<llvm::Function *> get_send_functions();
-  std::vector<llvm::Function *> get_recv_functions();
 
   bool is_send_function(llvm::Function *f);
   bool is_recv_function(llvm::Function *f);
 
+  std::vector<llvm::Function *> get_used_send_functions(){
+  	return _send_functions;
+  }
+  std::vector<llvm::Function *> get_used_recv_functions(){
+  	return _recv_functions;
+  }
+  std::vector<llvm::Function *> get_used_send_and_recv_functions(){
+  	return _send_recv_functions;
+  }
+private:
+  std::vector<llvm::Function *> _send_functions;
+  std::vector<llvm::Function *> _send_recv_functions;
+  std::vector<llvm::Function *> _recv_functions;
 };
 
 // will be managed by main
