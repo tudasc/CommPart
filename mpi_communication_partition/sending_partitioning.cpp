@@ -80,21 +80,22 @@ bool should_function_call_be_considered_modification(Value *ptr,
 				&& buffer_ptr->hasAttribute(Attribute::ReadOnly)) {
 			// readonly and nocapture: nothing need to be done
 
+			errs() << "buffer has readonly Consider using firstprivate for the buffer pointer\n";
 			//TODO actually it is allowed to load from ptr and then use a GEP to load it
-			// in some cases a firstprivate message should be used!!
-			errs() << "buffer has readonly\n";
+			// in such cases a firstprivate message should be used!!
 
-			return false;
+
+			return true;
 		} else {
 			return true;
 		}
-	} else if (call->getCalledFunction() == mpi_func->mpi_send) {
-		//TODO implement
-		//
-		return true;
-	} else if (call->getCalledFunction() == mpi_func->mpi_recv) {
+	} else if (mpi_func->is_send_function(call->getCalledFunction() )) {
 		// sending never does writing
+		//
 		return false;
+	} else if (mpi_func->is_recv_function(call->getCalledFunction())) {
+		// recv will write
+		return true;
 	} else {		// no known MPI or openmp func
 		if (ptr_argument->hasNoCaptureAttr()) {
 			if (call->getCalledFunction()->onlyReadsMemory()) {
@@ -108,7 +109,9 @@ bool should_function_call_be_considered_modification(Value *ptr,
 
 				if (ptr_argument->hasAttribute(Attribute::ReadOnly)) {
 					//readonly is ok --> nothing to do#
-					return false;
+					// this may not be true!!
+					//TODO a more detailed analysis?
+					return true;
 				} else {
 					// function may write
 					return true;
