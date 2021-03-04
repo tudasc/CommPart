@@ -134,7 +134,7 @@ bool should_function_call_be_considered_modification(Value *ptr,
 std::vector<Instruction*> get_ptr_usages(Value *ptr, Instruction *search_before,
 		const std::vector<Instruction*> exclude_instructions) {
 	assert(ptr != nullptr);
-	assert(search_before != nullptr);
+
 	// gather all uses of this buffer
 	LoopInfo *linfo = analysis_results->getLoopInfo(
 			search_before->getParent()->getParent());
