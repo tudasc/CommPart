@@ -421,11 +421,12 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 	auto *buffer_ptr = parallel_region->get_value_in_mikrotask(
 			buffer_ptr_in_main);
 
-	if (buffer_ptr->hasNoCaptureAttr()
-			&& buffer_ptr->hasAttribute(Attribute::ReadOnly)) {
-		// readonly and nocapture: nothing need to be done
+
+	if (parallel_region->get_function()->hasFnAttribute(Attribute::ReadOnly)){
+		// readonly nothing need to be done
 		return false;
 	}
+
 
 	errs() << "Handle Fork Call\n";
 
