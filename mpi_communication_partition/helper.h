@@ -48,11 +48,11 @@ template<class T> std::vector<T*> get_instruction_in_function(
 	return instructions;
 }
 
-template <class T>
-void remove_eraze_nullptr(std::vector<T*> &remove_nulls){
+template<class T>
+void remove_eraze_nullptr(std::vector<T*> &remove_nulls) {
 	remove_nulls.erase(
-			std::remove_if(remove_nulls.begin(),
-					remove_nulls.end(), [](auto *v) {
+			std::remove_if(remove_nulls.begin(), remove_nulls.end(),
+					[](auto *v) {
 						return v == nullptr;
 					}),remove_nulls.end());
 }
@@ -122,7 +122,8 @@ inline bool is_instruction_before(llvm::Instruction *A, llvm::Instruction *B) {
 	return is_instruction_before<llvm::Instruction>(A, B);
 }
 // it does not "preserve" the old type of the instructions
-inline llvm::Instruction* get_first_instruction(llvm::Instruction *A, llvm::Instruction *B) {
+inline llvm::Instruction* get_first_instruction(llvm::Instruction *A,
+		llvm::Instruction *B) {
 	return get_first_instruction<llvm::Instruction>(A, B);
 }
 
@@ -130,12 +131,12 @@ template<class T>
 std::enable_if_t<std::is_base_of<llvm::Instruction, T>::value, T>* get_first_instruction(
 		std::vector<T*> inst_list) {
 
-	T *current_instruction = inst_list[0];
-	bool is_viable = true;
-
 	if (inst_list.size() == 0) {
 		return nullptr;
 	}
+
+	T *current_instruction = inst_list[0];
+	bool is_viable = true;
 
 	Debug(
 			// no nullptrs are allowed
@@ -143,8 +144,9 @@ std::enable_if_t<std::is_base_of<llvm::Instruction, T>::value, T>* get_first_ins
 	)
 
 	// first entry is current candidate therefore begin at +1
-	for (auto it = inst_list.begin() + 1; it < inst_list.end(); ++it) {
-		auto *first_inst = get_first_instruction(current_instruction, *it);
+	for (auto it = inst_list.begin() + 1; it != inst_list.end(); ++it) {
+		T *first_inst = get_first_instruction(current_instruction, *it);
+
 		if (first_inst == nullptr) {
 			// no instruction dominates the other
 			is_viable = false;
@@ -197,7 +199,7 @@ std::enable_if_t<std::is_base_of<llvm::Instruction, T>::value, T>* get_last_inst
 	bool is_viable = true;
 
 // first entry is current candidate therefore begin at +1
-	for (auto it = inst_list.begin() + 1; it < inst_list.end(); ++it) {
+	for (auto it = inst_list.begin() + 1; it != inst_list.end(); ++it) {
 		auto *first_inst = get_first_instruction(current_instruction, *it);
 		if (first_inst == nullptr) {
 			// no instruction dominates the other
@@ -215,11 +217,10 @@ std::enable_if_t<std::is_base_of<llvm::Instruction, T>::value, T>* get_last_inst
 		// therefore we need to recheck
 		for (auto *i : inst_list) {
 			if (i != current_instruction
-					&& current_instruction
-							!= get_first_instruction(current_instruction, i)) {
+					&& i == get_first_instruction(current_instruction, i)) {
 				// found a non dominate relation: abort
 
-				llvm::errs() << "Error in finding the first instruction \n";
+				llvm::errs() << "Error in finding the last instruction \n";
 
 				return nullptr;
 			}
@@ -241,6 +242,8 @@ std::enable_if_t<std::is_base_of<llvm::Instruction, T>::value, T>* get_last_inst
 template<class T> inline std::enable_if_t<
 		std::is_base_of<llvm::Instruction, T>::value, T>* get_first_instruction(
 		T *A, T *B) {
+
+	assert(A != nullptr && B != nullptr);
 	auto *Pdomtree = analysis_results->getPostDomTree(A->getFunction());
 	auto *Domtree = analysis_results->getDomTree(A->getFunction());
 
@@ -260,6 +263,7 @@ template<class T> inline std::enable_if_t<
 template<class T> inline std::enable_if_t<
 		std::is_base_of<llvm::Instruction, T>::value, bool> is_instruction_before(
 		T *A, T *B) {
+	assert(A != nullptr && B != nullptr);
 	auto *first = get_first_instruction(A, B);
 	if (first == A) {
 		return true;
@@ -281,7 +285,7 @@ Debug(
 	llvm::errs() << "Dom Tree verify?" << Domtree->verify() << "\n";
 	A->getFunction()->dump();
 	)
-																					assert(false);
+																							assert(false);
 		return false;
 	}
 
