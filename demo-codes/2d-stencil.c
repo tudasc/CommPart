@@ -55,8 +55,8 @@ void printarr_par(int iter, double *array, int size, int px, int py, int rx,
 	snprintf(fname, 128, "./output-%i.bmp", iter);
 
 	MPI_File_open(comm, fname,
-			MPI_MODE_SEQUENTIAL | MPI_MODE_CREATE | MPI_MODE_WRONLY,
-			MPI_INFO_NULL, &fh);
+	MPI_MODE_SEQUENTIAL | MPI_MODE_CREATE | MPI_MODE_WRONLY,
+	MPI_INFO_NULL, &fh);
 
 	if (myrank == 0) {
 
@@ -68,7 +68,7 @@ void printarr_par(int iter, double *array, int size, int px, int py, int rx,
 		magic.magic[1] = 0x4D;
 
 		MPI_File_write_shared(fh, &magic, sizeof(struct bmpfile_magic),
-				MPI_BYTE, MPI_STATUSES_IGNORE);
+		MPI_BYTE, MPI_STATUSES_IGNORE);
 
 		header.filesz = sizeof(struct bmpfile_magic)
 				+ sizeof(struct bmpfile_header) + sizeof(struct bmpinfo_header)
@@ -79,7 +79,7 @@ void printarr_par(int iter, double *array, int size, int px, int py, int rx,
 				+ sizeof(struct bmpfile_header) + sizeof(struct bmpinfo_header);
 
 		MPI_File_write_shared(fh, &header, sizeof(struct bmpfile_header),
-				MPI_BYTE, MPI_STATUSES_IGNORE);
+		MPI_BYTE, MPI_STATUSES_IGNORE);
 
 		bmpinfo.header_sz = sizeof(struct bmpinfo_header);
 		bmpinfo.width = size;
@@ -94,7 +94,7 @@ void printarr_par(int iter, double *array, int size, int px, int py, int rx,
 		bmpinfo.nimpcolors = 0;
 
 		MPI_File_write_shared(fh, &bmpinfo, sizeof(struct bmpinfo_header),
-				MPI_BYTE, MPI_STATUSES_IGNORE);
+		MPI_BYTE, MPI_STATUSES_IGNORE);
 
 	}
 
@@ -133,7 +133,7 @@ void printarr_par(int iter, double *array, int size, int px, int py, int rx,
 			my_xcnt += bx;
 			my_ycnt++;
 			MPI_File_write_shared(fh, myline, linesize + padding, MPI_BYTE,
-					MPI_STATUSES_IGNORE);
+			MPI_STATUSES_IGNORE);
 		}
 		xcnt += bx;
 		if (xcnt >= size) {
@@ -254,11 +254,11 @@ int main(int argc, char **argv) {
 	MPI_Type_vector(by, 1, bx + 2, MPI_DOUBLE, &east_west_type);
 	MPI_Type_commit(&east_west_type);
 
-	MPI_Aint t_size=0;
+	MPI_Aint t_size = 0;
 	MPI_Type_extent(north_south_type, &t_size);
-	printf("North-South size:%d\n",t_size);
+	printf("North-South size:%d\n", t_size);
 	MPI_Type_extent(east_west_type, &t_size);
-	printf("East-West size:%d\n",t_size);
+	printf("East-West size:%d\n", t_size);
 
 	double heat; // total heat in system
 	for (int iter = 0; iter < niters; ++iter) {
@@ -272,7 +272,8 @@ int main(int argc, char **argv) {
 		heat = 0.0;
 
 //#pragma omp parallel for reduction(+:heat)
-#pragma omp parallel for
+//#pragma omp parallel for
+#pragma omp parallel for firstprivate(anew,aold) schedule(static,1000)
 		for (int j = 1; j < by + 1; ++j) {
 			for (int i = 1; i < bx + 1; ++i) {
 				anew[ind(i, j)] = aold[ind(i, j)] / 2.0
@@ -285,7 +286,8 @@ int main(int argc, char **argv) {
 
 		// exchange data with neighbors
 		MPI_Request reqs[4];
-
+//TODO Problem: irecv captures the send buffer
+		// via static analysis only we are not able to prove send and recv buffer to be differen5t
 		MPI_Irecv(&anew[ind(1, 0)] /* north */, 1, north_south_type, north, 9,
 				comm, &reqs[0]);
 		MPI_Irecv(&anew[ind(1, by + 1)] /* south */, 1, north_south_type, south,
@@ -293,7 +295,7 @@ int main(int argc, char **argv) {
 		MPI_Irecv(&anew[ind(bx + 1, 1)] /* west */, 1, east_west_type, east, 9,
 				comm, &reqs[2]);
 		MPI_Irecv(&anew[ind(0, 1)] /* east */, 1, east_west_type, west, 9, comm,
-				&reqs[4]);
+				&reqs[3]);
 
 		MPI_Send(&anew[ind(1, 1)] /* north */, 1, north_south_type, north, 9,
 				comm);
@@ -301,15 +303,14 @@ int main(int argc, char **argv) {
 				comm);
 		MPI_Send(&anew[ind(bx, 1)] /* east */, 1, east_west_type, east, 9,
 				comm);
-		MPI_Send(&anew[ind(1, 1)] /* west */, 1, east_west_type, west, 9, comm
-				);
+		MPI_Send(&anew[ind(1, 1)] /* west */, 1, east_west_type, west, 9, comm);
 
 		MPI_Waitall(4, reqs, MPI_STATUSES_IGNORE);
 
 		// swap arrays
-		tmp = anew;
-		anew = aold;
-		aold = tmp;
+
+		// swap with memcpy
+		memcpy(aold, anew, (bx + 2) * (by + 2) * sizeof(double));
 
 		// optional - print image
 		if (iter == niters - 1)
