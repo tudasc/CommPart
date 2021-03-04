@@ -136,10 +136,6 @@ std::vector<Instruction*> get_ptr_usages(Value *ptr, Instruction *search_before,
 	assert(ptr != nullptr);
 
 	// gather all uses of this buffer
-	LoopInfo *linfo = analysis_results->getLoopInfo(
-			search_before->getParent()->getParent());
-	DominatorTree *dt = analysis_results->getDomTree(
-			search_before->getParent()->getParent());
 
 	std::vector<Instruction*> to_analyze;
 	for (auto *u : ptr->users()) {
@@ -148,6 +144,10 @@ std::vector<Instruction*> get_ptr_usages(Value *ptr, Instruction *search_before,
 			if (auto *inst = dyn_cast<Instruction>(u)) {
 
 				if (search_before != nullptr) {
+					LoopInfo *linfo = analysis_results->getLoopInfo(
+							inst->getFunction());
+					DominatorTree *dt = analysis_results->getDomTree(
+							inst->getFunction());
 					if (llvm::isPotentiallyReachable(inst, search_before,
 							nullptr, dt, linfo)) {
 						// only then it may have an effect
@@ -164,7 +164,7 @@ std::vector<Instruction*> get_ptr_usages(Value *ptr, Instruction *search_before,
 	return to_analyze;
 }
 
-//TODO refactoring so that default values are set instead of voerloading?
+//TODO refactoring so that default values are set instead of overloading?
 Instruction* search_for_pointer_modification(Value *ptr,
 		std::vector<Instruction*> to_analyze, Instruction *search_before,
 		const std::vector<Instruction*> exclude_instructions);
