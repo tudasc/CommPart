@@ -19,6 +19,7 @@
 #include "debug.h"
 #include "helper.h"
 
+#include "llvm/Analysis/CFG.h"
 using namespace llvm;
 
 bool is_waitall_matching(ConstantInt *begin_index, ConstantInt *match_index,
@@ -42,7 +43,6 @@ bool is_waitall_matching(ConstantInt *begin_index, ConstantInt *match_index,
 			return true;
 		}
 	}
-
 
 	// could not prove true
 	Debug(errs() << "  FALSE\n";);
@@ -181,10 +181,10 @@ std::vector<CallBase*> get_corresponding_wait(CallBase *call) {
 		errs() << "could not determine scope of \n";
 		call->dump();
 		/*
-		errs() << "Assuming it will finish at mpi_finalize.\n"
-				<< "The Analysis result is still valid, although the chance of "
-						"false positives is higher\n";
-						*/
+		 errs() << "Assuming it will finish at mpi_finalize.\n"
+		 << "The Analysis result is still valid, although the chance of "
+		 "false positives is higher\n";
+		 */
 		// our analysis need to treat it as a blocking op
 		result.push_back(call);
 	}
@@ -192,10 +192,11 @@ std::vector<CallBase*> get_corresponding_wait(CallBase *call) {
 	// mpi finalize will end all communication nontheles
 	for (auto *user : mpi_func->mpi_finalize->users()) {
 		if (auto *finalize_call = dyn_cast<CallBase>(user)) {
-			assert(
-					finalize_call->getCalledFunction()
-							== mpi_func->mpi_finalize);
-			result.push_back(finalize_call);
+			if (llvm::isPotentiallyReachable(call, finalize_call, nullptr,
+					analysis_results->getDomTree(call->getFunction()),
+					analysis_results->getLoopInfo(call->getFunction()))) {
+				result.push_back(finalize_call);
+			}
 		}
 	}
 
@@ -262,7 +263,7 @@ std::vector<CallBase*> find_overlapping_operations(CallBase *mpi_call) {
 						// if there is another defined order:
 						// overlapping
 						result.push_back(other_call);
-					}else{
+					} else {
 						// no defined order: can not prove overlapping
 					}
 				}
