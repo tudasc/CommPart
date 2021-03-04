@@ -80,16 +80,16 @@ bool should_function_call_be_considered_modification(Value *ptr,
 				&& buffer_ptr->hasAttribute(Attribute::ReadOnly)) {
 			// readonly and nocapture: nothing need to be done
 
-			errs() << "buffer has readonly Consider using firstprivate for the buffer pointer\n";
+			errs()
+					<< "buffer has readonly Consider using firstprivate for the buffer pointer\n";
 			//TODO actually it is allowed to load from ptr and then use a GEP to load it
 			// in such cases a firstprivate message should be used!!
-
 
 			return true;
 		} else {
 			return true;
 		}
-	} else if (mpi_func->is_send_function(call->getCalledFunction() )) {
+	} else if (mpi_func->is_send_function(call->getCalledFunction())) {
 		// sending never does writing
 		//
 		return false;
@@ -154,9 +154,29 @@ std::vector<Instruction*> get_ptr_usages(Value *ptr, Instruction *search_before,
 					if (llvm::isPotentiallyReachable(inst, search_before,
 							nullptr, dt, linfo)) {
 						// only then it may have an effect
-						to_analyze.push_back(inst);
+
+						bool exclude = false;
+
+						if (auto *loop = linfo->getLoopFor(
+								search_before->getParent())) {
+							// exclude if it is inside loop but after send
+							if (loop == linfo->getLoopFor(inst->getParent())) {
+
+								if (search_before
+										== get_first_instruction(inst,
+												search_before)) {
+									exclude = true;
+								}
+
+							}
+
+						}
+						if (!exclude) {
+
+							to_analyze.push_back(inst);
+						}
 					}
-				} else {
+				} else {				// search_before==nullptr
 
 					to_analyze.push_back(inst);
 				}
@@ -198,7 +218,7 @@ Instruction* search_for_pointer_modification(Value *ptr,
 	if (to_analyze.size() == 0) {
 		to_analyze = get_ptr_usages(ptr, search_before, exclude_instructions);
 	}
-	// still no usages:
+// still no usages:
 	if (to_analyze.size() == 0) {
 		return nullptr;
 	}
@@ -331,6 +351,7 @@ bool is_location_loop_invariant(Value *ptr, Loop *loop,
 // will yield the latest modification = write to ptr
 // before the instruction in search_before, but exclude exclude_instructions --> e.g. instr that where already handled
 // if search_before is in a loop, will move out of the loop, if determined the load is loop invariant if exclude_instructions are ignored
+// if search before is in a loop: will not consider operations after search_before
 Instruction* get_latest_modification_of_pointer(Value *ptr,
 		Instruction *search_before,
 		const std::vector<Instruction*> exclude_instructions) {
@@ -617,7 +638,7 @@ bool handle_send_call(CallInst *send_call) {
 
 	std::vector<CallBase*> overlapping = find_overlapping_operations(send_call);
 
-	// convert to instruction*
+// convert to instruction*
 	std::vector<Instruction*> ignore;
 	ignore.reserve(overlapping.size() + 1);
 	std::move(overlapping.begin(), overlapping.end(),
@@ -625,7 +646,7 @@ bool handle_send_call(CallInst *send_call) {
 // and add the send call itself
 	ignore.push_back(send_call);
 
-Instruction *latest_modification = get_latest_modification_of_pointer(
+	Instruction *latest_modification = get_latest_modification_of_pointer(
 			buffer_ptr, send_call, ignore);
 
 	if (auto *call = dyn_cast<CallInst>(latest_modification)) {
