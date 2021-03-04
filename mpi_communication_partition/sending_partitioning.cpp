@@ -416,17 +416,51 @@ Instruction* get_latest_modification_of_pointer(Value *ptr,
 // or refactor so that return means something different
 bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 
-	auto *buffer_ptr_in_main = send_call->getArgOperand(0);
-
-	auto *buffer_ptr = parallel_region->get_value_in_mikrotask(
-			buffer_ptr_in_main);
-
-
-	if (parallel_region->get_function()->hasFnAttribute(Attribute::ReadOnly)){
+	if (parallel_region->get_function()->hasFnAttribute(Attribute::ReadOnly)) {
 		// readonly nothing need to be done
 		return false;
 	}
 
+	auto *buffer_ptr_in_main = send_call->getArgOperand(0);
+
+	std::vector<Value*> buffer_ptr_aliases_in_main;
+
+	//TODO check for this AA bug?
+	auto *AA = analysis_results->getAAResults(
+			parallel_region->get_fork_call()->getFunction());
+
+	for (Value *fork_call_arg : parallel_region->get_fork_call()->arg_operands()) {
+
+		if (fork_call_arg->getType()->isPointerTy()) {
+			if (!AA->isNoAlias(buffer_ptr_in_main, fork_call_arg)) {
+				buffer_ptr_aliases_in_main.push_back(fork_call_arg);
+
+				//fork_call_arg->dump();
+			}
+
+		}
+
+	}
+
+	if (buffer_ptr_aliases_in_main.size() == 0) {
+		// not actually getting a buffer ptr
+		assert(false);				// this function should not be called then
+		return false;
+	}
+
+	std::vector<Value*> buffer_ptr_aliases_in_parallel;
+	buffer_ptr_aliases_in_parallel.reserve(buffer_ptr_aliases_in_main.size());
+
+	std::transform(buffer_ptr_aliases_in_main.begin(),
+			buffer_ptr_aliases_in_main.end(),
+			std::back_inserter(buffer_ptr_aliases_in_parallel),
+			[parallel_region](auto *v) {
+				return parallel_region->get_value_in_mikrotask(v);
+			});
+// all values needs to be defined
+	Debug(
+			for(auto*p:buffer_ptr_aliases_in_parallel) {assert(p!=nullptr);}
+	)
 
 	errs() << "Handle Fork Call\n";
 
@@ -441,10 +475,6 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 
 		// make shure no called function writes the msg buffer (such calls should be inlined beforehand)
 
-		//TODO check for this AA bug
-		auto *AA = analysis_results->getAAResults(
-				parallel_region->get_function());
-
 		for (auto *call : call_list) {
 
 			// check if call is openmp RTL call
@@ -458,7 +488,9 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 
 						if (arg->getType()->isPointerTy()) {
 
-							if (!AA->isNoAlias(buffer_ptr, arg)) {
+							if (at_least_one_may_alias(
+									parallel_region->get_function(), arg,
+									buffer_ptr_aliases_in_parallel)) {
 
 								// may alias or must alias
 								//TODO Problem ptr is a function arg and may therefore alias with everything in function!
@@ -499,14 +531,15 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 		//TODO implement analysis of multiple for loops??
 		auto *loop_exit = parallel_region->get_parallel_for()->fini;
 
-		AA = analysis_results->getAAResults(parallel_region->get_function());
-
 		// filter out all stores that can not alias
 		store_list.erase(
 				std::remove_if(store_list.begin(), store_list.end(),
-						[AA, buffer_ptr](llvm::StoreInst *s) {
-							return AA->isNoAlias(buffer_ptr,
-									s->getPointerOperand());
+						[parallel_region, buffer_ptr_aliases_in_parallel](
+								llvm::StoreInst *s) {
+							return !at_least_one_may_alias(
+									parallel_region->get_function(),
+									s->getPointerOperand(),
+									buffer_ptr_aliases_in_parallel);
 						}),store_list.end());
 
 		// check if all remaining are within (or before the loop)

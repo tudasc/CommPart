@@ -85,6 +85,9 @@ template<class T> std::vector<T*> get_instruction_in_module(llvm::Module &M) {
 	return instructions;
 }
 
+// true if at least one value in alias_list may alias with v in function F
+bool at_least_one_may_alias(llvm::Function* f,llvm::Value* v,const std::vector<llvm::Value*> alias_list);
+
 /**
  * Returns the length of the pointer chain of a given value
  * For example the base pointer to a 2D array (int** arr) would return 2

@@ -100,3 +100,17 @@ size_t get_size_in_Byte(llvm::Module &M, llvm::Type *type) {
 	DataLayout *TD = new DataLayout(&M);
 	return TD->getTypeAllocSize(type);
 }
+
+
+// true if at least one value in alias_list may alisa with v
+bool at_least_one_may_alias(llvm::Function* f,llvm::Value* v,const std::vector<llvm::Value*> alias_list){
+	auto* AA = analysis_results->getAAResults(f);
+	for (auto* al: alias_list){
+		if (!AA->isNoAlias(v, al)){
+			return true;
+		}
+	}
+
+	// no may alias found
+	return false;
+}
