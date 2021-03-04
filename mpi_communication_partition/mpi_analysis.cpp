@@ -28,7 +28,7 @@ bool is_waitall_matching(ConstantInt *begin_index, ConstantInt *match_index,
 	assert(call->getCalledFunction() == mpi_func->mpi_waitall);
 	assert(call->getNumArgOperands() == 3);
 
-	Debug(call->dump(); errs() << "Is this waitall matching?";);
+	//Debug(call->dump(); errs() << "Is this waitall matching?";);
 
 	if (auto *count = dyn_cast<ConstantInt>(call->getArgOperand(0))) {
 
@@ -39,13 +39,13 @@ bool is_waitall_matching(ConstantInt *begin_index, ConstantInt *match_index,
 		if (begin + num_req > match && match >= begin) {
 			// proven, that this request is part of the requests waited for by the
 			// call
-			Debug(errs() << "  TRUE\n";);
+			//Debug(errs() << "  TRUE\n";);
 			return true;
 		}
 	}
 
 	// could not prove true
-	Debug(errs() << "  FALSE\n";);
+	//Debug(errs() << "  FALSE\n";);
 	return false;
 }
 
