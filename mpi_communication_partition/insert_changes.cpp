@@ -92,10 +92,15 @@ Instruction* move_to_maximum_upwards_point(Instruction *inst,
 		}
 		inst->moveAfter(move_after);
 		return inst;
+	} else if (auto* phi = dyn_cast<PHINode>(inst)) {
+		// cannot move up further
+		// we need to insert after ALL the PHIs
+		// so return the last PHI of block
+		return inst->getParent()->getFirstNonPHI()->getPrevNode();
 
 	} else {
 		errs()
-				<< "no analysis for moving (will not move to extend nonblocking window):\n";
+				<< "no analysis for moving (will not move further to extend nonblocking window):\n";
 		inst->dump();
 		return inst;
 	}

@@ -6,6 +6,7 @@
 
 #include <llvm/ADT/StringRef.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Type.h>
 
@@ -274,6 +275,22 @@ template<class T> inline std::enable_if_t<
 	} else if (first == B) {
 		return false;
 	} else {
+
+		if ((A->getParent() == B->getParent())) {
+			// for Domination:
+			// PHINodes in a block are unordered.
+			//assert(isa<llvm::PHINode>(A) && isa<llvm::PHINode>(B));
+			//TODO enable c++20 if this assertion should be checked
+			// still we need an order to be defined, so that we insert instruction after the last PHI
+
+			// Loop through the basic block until we find I1 or I2.
+			llvm::BasicBlock::const_iterator I = A->getParent()->begin();
+			for (; &*I != A && &*I != B; ++I)
+				/*empty*/;
+
+			return &*I == B;
+		} else {
+
 Debug(
 		auto *Pdomtree = analysis_results->getPostDomTree(A->getFunction());
 		auto *Domtree = analysis_results->getDomTree(A->getFunction());
@@ -289,12 +306,12 @@ Debug(
 				<< "\n";
 
 		llvm::errs() << "Dom Tree verify?" << Domtree->verify() << "\n";
-		A->getFunction()->dump();
+		//A->getFunction()->dump();
 		)
-		assert(false && "could not analyze relation between  A and B");
-		return false;
+								assert(false && "could not analyze relation between  A and B");
+			return false;
+		}
 	}
-
 }
 
 #endif
