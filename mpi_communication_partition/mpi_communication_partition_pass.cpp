@@ -139,6 +139,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 //Debug(M.dump(););
 
 //M.print(errs(), nullptr);
+		M.getFunction("main")->dump();
 
 		mpi_func = new MpiFunctions(M);
 		if (!mpi_func->is_mpi_used()) {
@@ -153,11 +154,17 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		mpi_implementation_specifics = new ImplementationSpecifics(M);
 
-// find MPI Send calls
 		for (auto *send_function : mpi_func->get_used_send_functions()) {
-			for (auto *senders : send_function->users()) {
 
-				if (auto *send_call = dyn_cast<CallInst>(senders)) {
+			// this iterator might be invalidated if a send call gets removed
+			// so we collect all instructions into a vector beforehand
+			std::vector<User*>senders;
+			std::copy(send_function->user_begin(), send_function->user_end(), std::back_inserter(senders));
+
+			for (auto *s : senders) {
+
+				//TODO do wen need to make shure this send call is actually still valid?
+				if (auto *send_call = dyn_cast<CallInst>(s)) {
 					modification = modification | handle_send_call(send_call);
 				}
 
@@ -167,12 +174,12 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 		//M.dump();
 
 		// only need to dump the relevant part
-
+/*
 		M.getFunction(".omp_outlined.")->dump();
 		M.getFunction("main")->dump();
 		if (M.getFunction(".omp_outlined._p") != nullptr) {
 			M.getFunction(".omp_outlined._p")->dump();
-		}
+		}*/
 
 		bool broken_dbg_info;
 		bool module_errors = verifyModule(M, &errs(), &broken_dbg_info);
