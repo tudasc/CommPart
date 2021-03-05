@@ -4,4 +4,12 @@
    ...
    fun:ucp_worker_iface_open
 }
+{
+   <kmp_affinity_inopm_lib>
+   Memcheck:Param
+   sched_setaffinity(mask)
+
+   ...
+   fun:_Z20__kmp_env_initializePKc
+}
 
