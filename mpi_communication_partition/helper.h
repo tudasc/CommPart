@@ -86,7 +86,8 @@ template<class T> std::vector<T*> get_instruction_in_module(llvm::Module &M) {
 }
 
 // true if at least one value in alias_list may alias with v in function F
-bool at_least_one_may_alias(llvm::Function* f,llvm::Value* v,const std::vector<llvm::Value*> alias_list);
+bool at_least_one_may_alias(llvm::Function *f, llvm::Value *v,
+		const std::vector<llvm::Value*> alias_list);
 
 /**
  * Returns the length of the pointer chain of a given value
@@ -274,21 +275,23 @@ template<class T> inline std::enable_if_t<
 		return false;
 	} else {
 Debug(
-	auto *Pdomtree = analysis_results->getPostDomTree(A->getFunction());
-	auto *Domtree = analysis_results->getDomTree(A->getFunction());
-	llvm::errs() << "could not analyze relation between  A and B\n";
-	A->dump();
-	B->dump();
+		auto *Pdomtree = analysis_results->getPostDomTree(A->getFunction());
+		auto *Domtree = analysis_results->getDomTree(A->getFunction());
+		llvm::errs() << "could not analyze relation between  A and B\n";
+		A->dump();
+		B->dump();
 
-	llvm::errs() << "A dominates B ?" << Domtree->dominates(A, B) << "\n";
-	llvm::errs() << "B dominates A ?" << Domtree->dominates(B, A) << "\n";
-	llvm::errs() << "A Postdominates B ?" << Pdomtree->dominates(A, B) << "\n";
-	llvm::errs() << "B Postdominates A ?" << Pdomtree->dominates(B, A) << "\n";
+		llvm::errs() << "A dominates B ?" << Domtree->dominates(A, B) << "\n";
+		llvm::errs() << "B dominates A ?" << Domtree->dominates(B, A) << "\n";
+		llvm::errs() << "A Postdominates B ?" << Pdomtree->dominates(A, B)
+				<< "\n";
+		llvm::errs() << "B Postdominates A ?" << Pdomtree->dominates(B, A)
+				<< "\n";
 
-	llvm::errs() << "Dom Tree verify?" << Domtree->verify() << "\n";
-	A->getFunction()->dump();
-	)
-																							assert(false);
+		llvm::errs() << "Dom Tree verify?" << Domtree->verify() << "\n";
+		A->getFunction()->dump();
+		)
+		assert(false && "could not analyze relation between  A and B");
 		return false;
 	}
 
