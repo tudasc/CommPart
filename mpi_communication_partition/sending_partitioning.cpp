@@ -187,6 +187,30 @@ std::vector<Instruction*> get_ptr_usages(Value *ptr, Instruction *search_before,
 	return to_analyze;
 }
 
+// give all store operations that write to ptr or a location derived from ptr
+void get_all_stores_resulting_from_ptr(Value *ptr,
+		std::vector<StoreInst*> &result) {
+
+	for (auto *u : ptr->users()) {
+		if (auto *store = dyn_cast<StoreInst>(u)) {
+			if (store->getPointerOperand() == ptr) {
+				result.push_back(store);
+			}
+		} else if (auto *load = dyn_cast<LoadInst>(u)) {
+			// no need to trace loaded value
+		} else if (auto *call = dyn_cast<CallBase>(u)) {
+			//TODO check if call is readonly and assert fail if not??
+		} else if (auto *i = dyn_cast<Instruction>(u)) {
+			// insert all resulting stores form derived into result vector
+			get_all_stores_resulting_from_ptr(i, result);
+		} else {
+			// should always be an instruction
+			assert(false && "Pointer is used in non-Indtruction?");
+		}
+	}
+
+}
+
 //TODO refactoring so that default values are set instead of overloading?
 Instruction* search_for_pointer_modification(Value *ptr,
 		std::vector<Instruction*> to_analyze, Instruction *search_before,
@@ -467,9 +491,6 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 	if (parallel_region->get_parallel_for()) {
 		// we have to build a list of all accesses to the buffer
 
-		auto store_list = get_instruction_in_function<StoreInst>(
-				parallel_region->get_function());
-
 		auto call_list = get_instruction_in_function<CallBase>(
 				parallel_region->get_function());
 
@@ -516,11 +537,18 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 		}
 		// checked all call instructions
 
+		std::vector<StoreInst*> store_list;
+
+		for (auto *p : buffer_ptr_aliases_in_parallel) {
+
+			get_all_stores_resulting_from_ptr(p, store_list);
+		}
+
 		// need to check all store instructions
 		// first we need to check if there is a store PAST the for loop accessing the ptr
 		auto *linfo = analysis_results->getLoopInfo(
 				parallel_region->get_function());
-		// we checed for the presence of the openmp loobs before
+		// we checed for the presence of the openmp loops before
 		assert(!linfo->empty());
 
 		auto *DT = analysis_results->getDomTree(
@@ -531,18 +559,8 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 		//TODO implement analysis of multiple for loops??
 		auto *loop_exit = parallel_region->get_parallel_for()->fini;
 
-		// filter out all stores that can not alias
-		store_list.erase(
-				std::remove_if(store_list.begin(), store_list.end(),
-						[parallel_region, buffer_ptr_aliases_in_parallel](
-								llvm::StoreInst *s) {
-							return !at_least_one_may_alias(
-									parallel_region->get_function(),
-									s->getPointerOperand(),
-									buffer_ptr_aliases_in_parallel);
-						}),store_list.end());
 
-		// check if all remaining are within (or before the loop)
+		// check if all stores are within (or before the loop)
 		bool are_all_stores_before_loop_finish = std::all_of(store_list.begin(),
 				store_list.end(), [PDT, loop_exit](llvm::StoreInst *s) {
 
@@ -576,7 +594,12 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 
 			auto *candidate = SE->getSCEV((*s)->getPointerOperand());
 
+			(*s)->dump();
 			candidate->dump();
+			//TODO Problem: if location is fixed (loop invariant) we can not compare it against loop-chainging pattern (as we do not know allocation layout beforehand)
+			// min and max is hard to define in this case
+
+			//TODO why is this important anyway, the single shared var should never alias with pointer!
 
 			if (SE->isKnownPredicate(CmpInst::Predicate::ICMP_SLE, candidate,
 					min)) {
