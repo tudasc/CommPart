@@ -225,16 +225,23 @@ Value* get_value_in_serial_part(Value *in_parallel,
 Value* get_instruction_in_serial_part(Instruction *in_parallel,
 		Microtask *parallel_region) {
 
+	//TODO is the is_allowed Part Debug code?
 	bool is_allowed = false;
 
-// unary
+	// unary
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::SExt);
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::ZExt);
 
-// binary
+	// cast
+	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Trunc);
+
+	// binary
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Add);
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Sub);
 	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Mul);
+	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::AShr);
+	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::LShr);
+	is_allowed = is_allowed | (in_parallel->getOpcode() == Instruction::Shl);
 
 //TODO add more allowed instructions if needed
 // only control-flow instructions such as branches are forbidden
@@ -292,8 +299,16 @@ Value* get_instruction_in_serial_part(Instruction *in_parallel,
 
 	IRBuilder<> builder(insert_point);
 
-	return builder.CreateNAryOp(in_parallel->getOpcode(), operands_in_serial,
-			in_parallel->getName());
+	if (Instruction::isCast(in_parallel->getOpcode())) {
+		// cast is no unary instruction
+		return builder.CreateCast(cast<CastInst>(in_parallel)->getOpcode(),
+				operands_in_serial[0], in_parallel->getType(),
+				in_parallel->getName());
+	} else {
+
+		return builder.CreateNAryOp(in_parallel->getOpcode(),
+				operands_in_serial, in_parallel->getName());
+	}
 
 	return nullptr;
 }
