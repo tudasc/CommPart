@@ -25,10 +25,9 @@ int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
 	request->valgrind_block_handle = VALGRIND_CREATE_BLOCK(buf,
 			request->partition_length_bytes * request->partition_count,
 			SEND_BLOCK_STRING);
+request->dest=dest;
 
-
-
-	// init MPI
+		// init MPI
 	return MPI_Send_init(buf, count * partitions, datatype, dest, tag, comm,
 			&request->request);
 }
@@ -114,7 +113,15 @@ int MPIX_Wait(MPIX_Request *request, MPI_Status *status) {
 	VALGRIND_MAKE_MEM_DEFINED(request->buf_start,
 			request->partition_length_bytes * request->partition_count);
 
+
+	if (request->dest!=MPI_PROC_NULL){
+		//TODO is this a bug in MPICH implementation?
+		//as its segfaults if starting a request to MPI_PROC_NULL
+		//TODO confirm that it is standard compilant to use proc null in persistent op and file bug report
+		//TODO check with oter implementation such as openmpi
+
 	MPI_Start(&request->request);
+	}
 	// only start communication now, so that MPI itself does not interfere with
 	// our memory access Analysis this way of implementing things is legal
 	// according to the MPI standard anyway
@@ -128,8 +135,10 @@ int MPIX_Wait(MPIX_Request *request, MPI_Status *status) {
 		memset(request->local_overlap, 0,
 				sizeof(int) * request->partition_count);
 	}
-
+	if (request->dest!=MPI_PROC_NULL){
 	return MPI_Wait(&request->request, status);
+	}
+	else return 0;
 }
 
 int MPIX_Request_free(MPIX_Request *request) {
@@ -397,8 +406,6 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 	unsigned long chunk_access_length;
 	long chunk_access_stride;	//  may be negative! == overlapping access
 
-
-
 	long sending_size = type_extned * count;
 
 	long access_size = (A_max * (loop_min + chunk_size) + B_max)
@@ -410,14 +417,15 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 				chunk_size);
 		printf(" sending size: %ld access_size:%ld\n", sending_size,
 				access_size);
-		printf(" expected access_size for example= 4000\n");
 		printf(" Ax+b: %ldx+%ld to %ldx+%ld\n", A_min, B_min, A_max, B_max);
 		printf(" buf_start %lu count %lld\n", (unsigned long) buf, count);
 	}
 
 	if (access_size >= sending_size) {
 		// no partitioning useful
-
+		if (rank == 0)
+			printf("Did not Partition Operation\n");
+		assert(partitions==1);
 		MPIX_Psend_init(buf, partitions, count, datatype, dest, tag, comm,
 		MPI_INFO_NULL, request);
 		request->A_max = A_max;

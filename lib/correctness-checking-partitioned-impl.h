@@ -15,6 +15,7 @@ typedef struct {
   int partitions_ready;
   int is_active;
   int valgrind_block_handle;
+  int dest;
   // to be used when there is a local overlap
   int* local_overlap;
   int* local_overlap_count;
