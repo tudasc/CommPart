@@ -96,6 +96,11 @@ bool should_function_call_be_considered_modification(Value *ptr,
 	} else if (mpi_func->is_recv_function(call->getCalledFunction())) {
 		// recv will write
 		return true;
+	} else if (call->getCalledFunction() == mpi_func->partition_sending_op) {
+		// if an operation was replaced with a partitioned operation,
+		// we have previously analyzed that there is no conflicting operation
+		// meaning we can safetly ignore the already partitioned operations
+		return false;
 	} else {		// no known MPI or openmp func
 		if (ptr_argument->hasNoCaptureAttr()) {
 			if (call->getCalledFunction()->onlyReadsMemory()) {
@@ -123,7 +128,7 @@ bool should_function_call_be_considered_modification(Value *ptr,
 			errs() << "Function " << call->getCalledFunction()->getName()
 					<< " captures the send buffer pointer\n No further analysis possible\n";
 			//assert(false); ??
-			return true;				// no may write
+			return true;			// no may write
 		}
 	}
 
@@ -185,6 +190,25 @@ std::vector<Instruction*> get_ptr_usages(Value *ptr, Instruction *search_before,
 		}
 	}
 	return to_analyze;
+}
+
+// true if value ore something computed from value goes into a partition send call
+bool is_value_passed_into_partition_call(Value *v) {
+
+	for (auto *u : v->users())
+		if (auto *call = dyn_cast<CallInst>(u)) {
+			if (call->getCalledFunction() == mpi_func->partition_sending_op) {
+				return true;
+			} else {
+				// passing it into another func is not supported
+				return false;
+			}
+		} else {
+			if (is_value_passed_into_partition_call(u))
+				return true;
+		}
+// nothing found -- this also ends recursion if v.users.size==0
+	return false;
 }
 
 // give all store operations that write to ptr or a location derived from ptr
@@ -290,13 +314,24 @@ Instruction* search_for_pointer_modification(Value *ptr,
 		} else if (auto *unary = dyn_cast<UnaryInstruction>(
 				current_instruction)) {
 			// such as cast
-			assert(
-					unary->getType()->isPointerTy()
-							&& "Cast pointer to non pointer. Analysis of this is not supported ");
-			// get a possible modification point
-			modification_points.push_back(
-					search_for_pointer_modification(unary, search_before,
-							exclude_instructions));
+
+			if (unary->getType()->isPointerTy()) {
+				// get a possible modification point
+				modification_points.push_back(
+						search_for_pointer_modification(unary, search_before,
+								exclude_instructions));
+			} else {
+
+				// if this goes into a partition_sending_op_call it is OK
+				if (!is_value_passed_into_partition_call(unary)) {
+					// otherwise
+					unary->dump();
+					assert(
+							unary->getType()->isPointerTy()
+									&& "Pointer is casted to non-pointer. Analysis of this is not supported yet");
+				}
+
+			}
 
 		} else {
 			errs()
@@ -449,7 +484,7 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 
 	std::vector<Value*> buffer_ptr_aliases_in_main;
 
-	//TODO check for this AA bug?
+//TODO check for this AA bug?
 	auto *AA = analysis_results->getAAResults(
 			parallel_region->get_fork_call()->getFunction());
 
@@ -501,33 +536,38 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 			// check if call is openmp RTL call
 			if (!call->getCalledFunction()->getName().startswith("__kmpc_")) {
 
-				//TODO do i need to handle MPi calls seperately?
+				// do i need to handle MPi calls seperately?
+				// there should not be MPI inside openmp due to multithreaded performance issues of MPI
+				// but i need to exclude the already made changes:
+				if (!(call->getCalledFunction()
+						== mpi_func->signoff_partitions_after_loop_iter)) {
 
-				for (auto &a : call->args()) {
+					for (auto &a : call->args()) {
 
-					if (auto *arg = dyn_cast<Value>(a)) {
+						if (auto *arg = dyn_cast<Value>(a)) {
 
-						if (arg->getType()->isPointerTy()) {
+							if (arg->getType()->isPointerTy()) {
 
-							if (at_least_one_may_alias(
-									parallel_region->get_function(), arg,
-									buffer_ptr_aliases_in_parallel)) {
+								if (at_least_one_may_alias(
+										parallel_region->get_function(), arg,
+										buffer_ptr_aliases_in_parallel)) {
 
-								// may alias or must alias
-								//TODO Problem ptr is a function arg and may therefore alias with everything in function!
+									// may alias or must alias
+									//TODO Problem ptr is a function arg and may therefore alias with everything in function!
 
-								//TODO check if nocapture and readonly in tgt function
+									//TODO check if nocapture and readonly in tgt function
 
-								call->dump();
-								errs()
-										<< "Found call with ptr that may alias, analysis is not detailed here\n";
+									call->dump();
+									errs()
+											<< "Found call with ptr that may alias, analysis is not detailed here\n";
 
-								if (true) {
-									// found function that accesses the buffer: threat the whole parallel as store
-									//TODO maybe force inlining to allow further analysis?
-									handle_modification_location(send_call,
-											parallel_region->get_fork_call());
-									return true;
+									if (true) {
+										// found function that accesses the buffer: threat the whole parallel as store
+										//TODO maybe force inlining to allow further analysis?
+										handle_modification_location(send_call,
+												parallel_region->get_fork_call());
+										return true;
+									}
 								}
 							}
 						}
@@ -558,7 +598,6 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 
 		//TODO implement analysis of multiple for loops??
 		auto *loop_exit = parallel_region->get_parallel_for()->fini;
-
 
 		// check if all stores are within (or before the loop)
 		bool are_all_stores_before_loop_finish = std::all_of(store_list.begin(),
