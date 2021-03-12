@@ -5,6 +5,8 @@
 // user-code without any need for extra linking
 #define INCLUDE_DEFINITION_IN_HEADER
 
+#define DEBUGING_PRINTINGS
+
 #include "mpi.h"
 
 typedef struct {
@@ -24,6 +26,9 @@ typedef struct {
   long B_min;
   long A_max;
   long B_max;
+  #ifdef DEBUGING_PRINTINGS
+  int operation_number;
+  #endif
   //MPI_Aint type_extend; // not needed anymore
 
 } MPIX_Request;
