@@ -1,6 +1,8 @@
 #include "correctness-checking-partitioned-impl.h"
 #include "assert.h"
+#ifdef DO_VALGRIND_CHECKS
 #include "memcheck.h"
+#endif
 #include "mpi.h"
 #include <stdlib.h>
 #include <limits.h>
@@ -26,9 +28,11 @@ int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
 	request->partition_count = partitions;
 	request->partitions_ready = 0;
 	request->is_active = 0;
+#ifdef DO_VALGRIND_CHECKS
 	request->valgrind_block_handle = VALGRIND_CREATE_BLOCK(buf,
 			request->partition_length_bytes * request->partition_count,
 			SEND_BLOCK_STRING);
+#endif
 	request->dest = dest;
 
 #ifdef DEBUGING_PRINTINGS
@@ -55,9 +59,11 @@ int MPIX_Precv_init(void *buf, int partitions, MPI_Count count,
 	request->partition_count = partitions;
 	request->partitions_ready = 0;
 	request->is_active = 0;
+#ifdef DO_VALGRIND_CHECKS
 	request->valgrind_block_handle = VALGRIND_CREATE_BLOCK(buf,
 			request->partition_length_bytes * request->partition_count,
 			RECV_BLOCK_STRING);
+#endif
 
 #ifdef DEBUGING_PRINTINGS
 // increment and assign
@@ -72,7 +78,7 @@ int MPIX_Precv_init(void *buf, int partitions, MPI_Count count,
 int MPIX_Pready(int partition, MPIX_Request *request) {
 
 	assert(request->is_active == 1);
-
+#ifdef DO_VALGRIND_CHECKS
 	// taint partition as modification is forbidden
 	VALGRIND_MAKE_MEM_NOACCESS(
 			((char* )request->buf_start)
@@ -81,6 +87,7 @@ int MPIX_Pready(int partition, MPIX_Request *request) {
 	// for a send operation reading is actually legal!!
 	// valgrind does not support this fine grained analysis :-(
 	// so we have to filter valgrinds errors based on the block names
+#endif
 
 #pragma omp atomic
 	++request->partitions_ready;
@@ -125,9 +132,11 @@ int MPIX_Wait(MPIX_Request *request, MPI_Status *status) {
 
 	assert(request->partition_count == request->partitions_ready);
 
+#ifdef DO_VALGRIND_CHECKS
 	// now access is legal again
 	VALGRIND_MAKE_MEM_DEFINED(request->buf_start,
 			request->partition_length_bytes * request->partition_count);
+#endif
 
 	if (request->dest != MPI_PROC_NULL) {
 		//TODO is this a bug in MPICH implementation?
@@ -158,8 +167,9 @@ int MPIX_Wait(MPIX_Request *request, MPI_Status *status) {
 
 int MPIX_Request_free(MPIX_Request *request) {
 	assert(request->is_active == 0);
-
+#ifdef DO_VALGRIND_CHECKS
 	VALGRIND_DISCARD(request->valgrind_block_handle);
+#endif
 
 	if (request->local_overlap) {
 		free(request->local_overlap);

@@ -5,7 +5,10 @@
 // user-code without any need for extra linking
 #define INCLUDE_DEFINITION_IN_HEADER
 
+// print debugging output and statistics
 #define DEBUGING_PRINTINGS
+// switch on the valgrind checking part
+#define DO_VALGRIND_CHECKS
 
 #include "mpi.h"
 
@@ -16,7 +19,9 @@ typedef struct {
   int partition_count;
   int partitions_ready;
   int is_active;
+#ifdef DO_VALGRIND_CHECKS
   int valgrind_block_handle;
+#endif
   int dest;
   // to be used when there is a local overlap
   int* local_overlap;
@@ -49,9 +54,11 @@ int MPIX_Wait(MPIX_Request *request, MPI_Status *status);
 
 int MPIX_Request_free(MPIX_Request *request);
 
+#ifdef DO_VALGRIND_CHECKS
 // definition of valgrind block names
 #define SEND_BLOCK_STRING "SEND OPERATION: READING IS ALLOWED!"
 #define RECV_BLOCK_STRING "RECEIVE OPERATION: READING IS FORBIDDEN"
+#endif
 
 #ifdef INCLUDE_DEFINITION_IN_HEADER
 #include "correctness-checking-partitioned-impl.c"
