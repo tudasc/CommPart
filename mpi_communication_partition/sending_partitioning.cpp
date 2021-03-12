@@ -666,7 +666,7 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 		auto *LI = analysis_results->getLoopInfo(
 				parallel_region->get_function());
 
-		auto *loop = parallel_region->get_for_loop()
+		auto *loop = parallel_region->get_for_loop();
 		assert(loop != nullptr);
 		//loop->print(errs());
 

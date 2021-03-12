@@ -5,6 +5,7 @@
 
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instructions.h>
+#include "llvm/Analysis/LoopInfo.h"
 
 /**
  * Struct with pointers to OpenMP Runtime Library calls for parallel for loops
@@ -58,7 +59,8 @@ public:
 	llvm::Function* get_function();
 
 	ParallelForData* get_parallel_for();
-	llvm::Loop* Microtask::get_for_loop();
+	llvm::Loop* get_chunk_loop();
+	llvm::Loop* get_for_loop();
 
 	ReductionData* get_reduction();
 

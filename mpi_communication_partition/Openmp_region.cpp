@@ -154,10 +154,19 @@ BasicBlock* Microtask::find_loop_end_block() {
 
 }
 
-Loop* Microtask::get_for_loop() {
+Loop* Microtask::get_chunk_loop() {
 	auto *LI = analysis_results->getLoopInfo(_function);
 
 	auto *preheader = _parallel_for.init->getParent()->getNextNode();
 
-	auto *loop = LI->getLoopFor(preheader->getNextNode());
+	return LI->getLoopFor(preheader->getNextNode());
+
+}
+
+//TODO we need to get the real for loop!
+Loop* Microtask::get_for_loop() {
+	Loop *top_level_loop = get_chunk_loop();
+	auto sub_loop_list = top_level_loop->getSubLoops();
+	assert(sub_loop_list.size() == 1);
+	return top_level_loop->getSubLoops()[0];
 }
