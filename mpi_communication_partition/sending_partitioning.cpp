@@ -666,16 +666,25 @@ bool handle_fork_call(Microtask *parallel_region, CallInst *send_call) {
 		auto *LI = analysis_results->getLoopInfo(
 				parallel_region->get_function());
 
-		//TODO refactoring!
-		// this shcould be part of microtask?
-		// the for init call is before the loop preheader
-		auto *preheader =
-				parallel_region->get_parallel_for()->init->getParent()->getNextNode();
-
-		auto *loop = LI->getLoopFor(preheader->getNextNode());
-
+		auto *loop = parallel_region->get_for_loop()
 		assert(loop != nullptr);
-		//loop->print(errs()
+		//loop->print(errs());
+
+		//{{{(8 + (8 * (1 + (sext i32 %14 to i64))<nsw> * %19) + %3),+,
+		//(8 * (sext i32 %15 to i64) * %19)}<%omp.inner.for.cond.preheader>,+,
+			//(8 * %19)<nsw>}<%omp.inner.for.body>,+,8}<nsw><%for.body>
+
+		//TODO Problem: the current impl will only use min
+		// but we need max of inner loop
+
+
+		// loop->getBounds->getFinalIVValue()
+		//min = start
+		// max = start + end_value-begin_value * step
+		// must be computable (at least recusively)
+		// if not computalbe it cannot be an openmp loop
+		// max value if inner loop must be invariant regarding uter loop for our analysis
+
 
 		if (auto *min_correct_form = dyn_cast<SCEVAddRecExpr>(min)) {
 			if (auto *max_correct_form = dyn_cast<SCEVAddRecExpr>(max)) {

@@ -135,12 +135,11 @@ llvm::Value* Microtask::get_value_in_main(llvm::Value *val) {
 
 BasicBlock* Microtask::find_loop_end_block() {
 
-	if (this->get_parallel_for()==nullptr){
+	if (this->get_parallel_for() == nullptr) {
 		return nullptr;
 	}
 
-	auto it = find_if_exactly_one(_function->begin(),
-			_function->end(),
+	auto it = find_if_exactly_one(_function->begin(), _function->end(),
 			[](BasicBlock &bb) {
 				return bb.getName().startswith(
 						"omp.dispatch.cond.omp.dispatch.end");
@@ -153,4 +152,12 @@ BasicBlock* Microtask::find_loop_end_block() {
 		return &*it;
 	}
 
+}
+
+Loop* Microtask::get_for_loop() {
+	auto *LI = analysis_results->getLoopInfo(_function);
+
+	auto *preheader = _parallel_for.init->getParent()->getNextNode();
+
+	auto *loop = LI->getLoopFor(preheader->getNextNode());
 }
