@@ -21,9 +21,9 @@ int main(int argc, char **argv) {
 	int n, energy, niters, root_numtasks;
 	double start_time = MPI_Wtime(); // time as early as possible so that overhead of partitioning is defenitely captured
 	// default params
-	n = 40;
-	energy = 10;
-	niters = 10;
+	n = 384 * 10000;
+	energy = 256;
+	niters = 1000;
 	// argument checking
 	if (argc >= 4) {
 		n = atoi(argv[1]); // n times n grid
@@ -55,6 +55,8 @@ int main(int argc, char **argv) {
 
 	const int block_size = n / root_numtasks;
 
+	if (rank==0) printf("Block_size = %d(*8)",block_size);
+
 	// each process owns one heat source with random placement
 	// +1 for the halo line
 	const int local_heat_source_x = 1 + (rand() % block_size);
@@ -66,27 +68,34 @@ int main(int argc, char **argv) {
 			(block_size + 2) * (block_size + 2) * sizeof(double)); // 1-wide halo zones!
 	double *anew = (double*) calloc(1,
 			(block_size + 2) * (block_size + 2) * sizeof(double)); // 1-wide halo zones!
-/*
-	if (rank == 0) {
-		printf("Grid of %i times %i processes\nwith block of %i times %i\n",
-				root_numtasks, root_numtasks, block_size, block_size);
-	}
-*/
+
+	/*
+					 if (rank == 0) {
+					 printf("Grid of %i times %i processes\nwith block of %i times %i\n",
+					 root_numtasks, root_numtasks, block_size, block_size);
+					 }
+					 */
+
 	// datatypes for halo exchange
 	MPI_Datatype full_line_type;
 	MPI_Type_contiguous(block_size, MPI_DOUBLE, &full_line_type);
 	MPI_Type_commit(&full_line_type);
 
 	MPI_Datatype first_element_of_line_type;
-	MPI_Type_vector(1, 1, block_size + 2, MPI_DOUBLE,
-			&first_element_of_line_type);
+	// create a padded type to only sent only the first element of a line
+	MPI_Type_create_resized(MPI_DOUBLE,0,(block_size + 2)*sizeof(double),&first_element_of_line_type);
 	MPI_Type_commit(&first_element_of_line_type);
+	//https://pages.tacc.utexas.edu/~eijkhout/pcse/html/mpi-data.html#Typeextent
+
+
 	// again +2 for the halo area
 	// full line does not need this halo part, as it is only used to send one line at a time
 	// if one wants to use it for sending multiple lines at a time better use:
 	//MPI_Type_vector(1, block_length, block_length+2, MPI_DOUBLE, &full_line_type);
 
-	MPI_Request reqs[8];
+	MPI_Request reqs[8] = { MPI_REQUEST_NULL, MPI_REQUEST_NULL,
+			MPI_REQUEST_NULL, MPI_REQUEST_NULL, MPI_REQUEST_NULL,
+			MPI_REQUEST_NULL, MPI_REQUEST_NULL, MPI_REQUEST_NULL };
 
 	double heat; // total heat in system
 
@@ -97,7 +106,7 @@ int main(int argc, char **argv) {
 
 		heat = 0.0;
 // the memory pointed to by anew and aold is shared but the ptr itself can be firstprivate
-#pragma omp parallel for firstprivate(anew,aold) schedule(static,1000) reduction(+:heat) default(none)
+#pragma omp parallel for firstprivate(anew,aold,block_size) schedule(static,1000) reduction(+:heat) default(none)
 		for (int j = 1; j < block_size + 1; ++j) {
 			for (int i = 1; i < block_size + 1; ++i) {
 				// stencil
@@ -121,18 +130,24 @@ int main(int argc, char **argv) {
 				MPI_COMM_WORLD, &reqs[2]);
 		MPI_Irecv(&anew[ind(0, 1)], block_size, first_element_of_line_type,
 				west, TAG, MPI_COMM_WORLD, &reqs[3]);
-		//TODO try moving before loop if my analysis doesnt break
+		//TODO try moving before loop if my analysis doesnt break?
 
+
+		//TODO nested loop fehler!
+		// 64k is actually right!
+		// correctly not partitioning this send ops
 		MPI_Isend(&anew[ind(1, 1)], 1, full_line_type, north, TAG,
-		MPI_COMM_WORLD, &reqs[4]);
+				MPI_COMM_WORLD, &reqs[4]);
 		MPI_Isend(&anew[ind(1, block_size)], 1, full_line_type, south, TAG,
-		MPI_COMM_WORLD, &reqs[5]);
+				MPI_COMM_WORLD, &reqs[5]);
+
+		//TODO this send op is flawed
 		MPI_Isend(&anew[ind(block_size, 1)], block_size,
-				first_element_of_line_type, east, TAG,
-				MPI_COMM_WORLD, &reqs[6]);
+				first_element_of_line_type, east, TAG, MPI_COMM_WORLD,
+				&reqs[6]);
+		//This send op partitions just fine!
 		MPI_Isend(&anew[ind(1, 1)], block_size, first_element_of_line_type,
-				west,
-				TAG, MPI_COMM_WORLD, &reqs[7]);
+				west, TAG, MPI_COMM_WORLD, &reqs[7]);
 
 		MPI_Waitall(8, reqs, MPI_STATUSES_IGNORE);
 
