@@ -8,46 +8,56 @@
 // print debugging output and statistics
 #define DEBUGING_PRINTINGS
 // switch on the valgrind checking part
-#define DO_VALGRIND_CHECKS
+//#define DO_VALGRIND_CHECKS
+// switch of assertions if defined:
+//#define NDEBUG
 
 #include "mpi.h"
 
 typedef struct {
-  MPI_Request request;
-  void *buf_start;
-  int partition_length_bytes;
-  int partition_count;
-  int partitions_ready;
-  int is_active;
+	MPI_Request request;
+	void *buf_start;
+	int partition_length_bytes;
+	int partition_count;
+	int partitions_ready;
+	int is_active;
 #ifdef DO_VALGRIND_CHECKS
   int valgrind_block_handle;
 #endif
-  int dest;
-  // to be used when there is a local overlap
-  int* local_overlap;
-  int* local_overlap_count;
-  // information for the partitioning
-  long A_min;
-  long B_min;
-  long A_max;
-  long B_max;
-  #ifdef DEBUGING_PRINTINGS
-  int operation_number;
-  #endif
-  //MPI_Aint type_extend; // not needed anymore
+	int dest;
+	// to be used when there is a local overlap
+	int *local_overlap;
+	int *local_overlap_count;
+	// information for the partitioning
+	long A_min;
+	long B_min;
+	long A_max;
+	long B_max;
+#ifdef DEBUGING_PRINTINGS
+	int operation_number;
+#endif
+	//MPI_Aint type_extend; // not needed anymore
 
 } MPIX_Request;
 
+// used for pointer arithmetic (as negative results can be possible if e.g. subtracting the sending buffer start adress from an abitrary adress)
+// we need the infromation if something is actually negative, therefore this type needs to have double bitwidth than a pointer
+typedef __int128 ptr_arithmetic_t;
+static_assert(sizeof(ptr_arithmetic_t) >= 2* sizeof(void*),"This type needs minimum the double pointer width");
+//TODO check again that ptr_arithmetic_t is used where it is needed abd not used where it is not needed
+
+
+
 int MPIX_Psend_init(void *buf, int partitions, MPI_Count count,
-                    MPI_Datatype datatype, int dest, int tag, MPI_Comm comm,
-                    MPI_Info info, MPIX_Request *request);
+		MPI_Datatype datatype, int dest, int tag, MPI_Comm comm, MPI_Info info,
+		MPIX_Request *request);
 int MPIX_Precv_init(void *buf, int partitions, MPI_Count count,
-                    MPI_Datatype datatype, int dest, int tag, MPI_Comm comm,
-                    MPI_Info info, MPIX_Request *request);
+		MPI_Datatype datatype, int dest, int tag, MPI_Comm comm, MPI_Info info,
+		MPIX_Request *request);
 
 int MPIX_Pready(int partition, MPIX_Request *request);
 int MPIX_Pready_range(int partition_low, int partition_high,
-                      MPIX_Request *request);
+		MPIX_Request *request);
 
 int MPIX_Start(MPIX_Request *request);
 int MPIX_Wait(MPIX_Request *request, MPI_Status *status);
