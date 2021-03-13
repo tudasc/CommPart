@@ -511,9 +511,6 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 		partitions = count / valid_partition_size_datamembers;
 
-		if (rank == 0)
-			printf("Partitions: %d\n", partitions);
-
 		assert(count % valid_partition_size_datamembers == 0);
 		assert(
 				(partitions * valid_partition_size_datamembers * type_extned)
@@ -546,7 +543,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		 partition_size_datamembers = 1;
 		 }
 		 */
-#ifdef DEBUGING_PRINTINGS
+#ifdef STATISTIC_PRINTINGS
 		printf("Partitioned send operation into %d Partitions\n", partitions);
 #endif
 		MPIX_Psend_init(buf, partitions, valid_partition_size_datamembers,

@@ -6,11 +6,13 @@
 #define INCLUDE_DEFINITION_IN_HEADER
 
 // print debugging output and statistics
-#define DEBUGING_PRINTINGS
+//#define DEBUGING_PRINTINGS
+// print statistics for partitioning
+//#define STATISTIC_PRINTINGS
 // switch on the valgrind checking part
 //#define DO_VALGRIND_CHECKS
 // switch of assertions if defined:
-//#define NDEBUG
+#define NDEBUG
 
 #include "mpi.h"
 
