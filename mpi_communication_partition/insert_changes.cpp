@@ -867,37 +867,40 @@ CallInst* add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 
 	//TODO something is wrong with the in work implementation of the gatehring of the attributes
 
-	/*
 	// this is just for testing
 	// 8th parameter of static_for_init
 	Value* chunk_size_in_parallel=parallel_region->get_parallel_for()->init->getArgOperand(8);
 	Value* loop_min_in_parallel=parallel_region->get_parallel_for()->init->getArgOperand(4);
 
-	errs() << "FROM -- TO\n";
-	min_adress->evaluateAtIteration(SE->getSCEV(loop_min_in_parallel),*SE)->dump();
-	min_adress->evaluateAtIteration(SE->getSCEV(chunk_size_in_parallel),*SE)->dump();
+	// TODO what if cast isnt valid?
+	// then abort as no chunksize was given
+	auto* chunk_access_min= cast<SCEVAddRecExpr>(min_adress->getStart());
+	auto* chunk_access_max= cast<SCEVAddRecExpr>(max_adress->getStart());
+
+	auto* min_of_current_chunk=chunk_access_min->evaluateAtIteration(SE->getSCEV(loop_min_in_parallel),*SE);
+	auto* min_of_next_chunk=chunk_access_min->evaluateAtIteration(SE->getSCEV(chunk_size_in_parallel),*SE);
+
+	auto* max_of_current_chunk=chunk_access_max->evaluateAtIteration(SE->getSCEV(loop_min_in_parallel),*SE);
+	auto* max_of_next_chunk=chunk_access_max->evaluateAtIteration(SE->getSCEV(chunk_size_in_parallel),*SE);
 
 
-	auto*start_of_next_chunk=SE->getAddExpr(SE->getSCEV(loop_min_in_parallel), SE->getSCEV(chunk_size_in_parallel));
-	start_of_next_chunk = SE->getAddExpr(start_of_next_chunk, SE->getConstant(start_of_next_chunk->getType(), 1));
-	start_of_next_chunk->dump();
-
-	ASK_TO_CONTINIUE
-	*/
+	//TODO do we need chunk size +1?
+	//auto*start_of_next_chunk=SE->getAddExpr(SE->getSCEV(loop_min_in_parallel), SE->getSCEV(chunk_size_in_parallel));
+	//start_of_next_chunk = SE->getAddExpr(start_of_next_chunk, SE->getConstant(start_of_next_chunk->getType(), 1));
+	//start_of_next_chunk->dump();
 
 
 	Value *A_min = get_scev_value_before_parallel_function(
-			min_adress->getStepRecurrence(*SE), insert_point, parallel_region);
+			min_of_current_chunk, insert_point, parallel_region);
 
 	Value *B_min = get_scev_value_before_parallel_function(
-			min_adress->getStart(), insert_point, parallel_region);
+			min_of_next_chunk, insert_point, parallel_region);
 
 	Value *A_max = get_scev_value_before_parallel_function(
-			max_adress->getStepRecurrence(*SE), insert_point, parallel_region,
-			true);
+			max_of_current_chunk, insert_point, parallel_region);
 
 	Value *B_max = get_scev_value_before_parallel_function(
-			max_adress->getStart(), insert_point, parallel_region, true);
+			max_of_next_chunk, insert_point, parallel_region);
 
 // 8th parameter of static_for_init
 	Value *chunk_size = get_value_in_serial_part(

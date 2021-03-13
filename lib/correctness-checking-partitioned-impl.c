@@ -205,7 +205,7 @@ int signoff_partitions_after_loop_iter(MPIX_Request *request,
 		}
 
 #ifdef DEBUGING_PRINTINGS
-		printf("Loop Part %ld to %ld : ready Partitions %d to %d \n", min_iter,
+		printf("Operation %d: Loop Part %ld to %ld : ready Partitions %d to %d \n",request->operation_number, min_iter,
 				max_iter, min_part_num, max_part_num);
 #endif
 
@@ -418,8 +418,21 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		int dest, int tag, MPI_Comm comm, MPIX_Request *request,
 		// loop info
 		// access= pattern ax+b
-		long A_min, long B_min, long A_max, long B_max, long chunk_size,
+		long curr_min, long next_min, long curr_max, long next_max, long chunk_size,
 		long loop_min, long loop_max) {
+
+	// calculate A and B based on the acces range of one chunk
+	//TODO refactor to remove irrelevant calculation of A and B
+	long A_min, B_min,  A_max,  B_max;
+	B_min = curr_min;
+	B_max = curr_max;
+
+	A_min= (next_min-curr_min)/chunk_size;
+	A_max= (next_max-curr_max)/chunk_size;
+
+
+
+
 
 	int partitions = 1;
 
@@ -452,6 +465,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 		printf(" Ax+b: %ldx+%ld to %ldx+%ld\n", A_min, B_min, A_max, B_max);
 		printf(" buf_start %lu count %lld\n", (unsigned long) buf, count);
 	}
+	assert (access_size==next_max-curr_min);
 #endif
 
 	if (access_size >= sending_size) {

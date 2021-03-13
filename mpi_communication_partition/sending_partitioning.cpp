@@ -325,10 +325,13 @@ Instruction* search_for_pointer_modification(Value *ptr,
 				// if this goes into a partition_sending_op_call it is OK
 				if (!is_value_passed_into_partition_call(unary)) {
 					// otherwise
+					/*
 					unary->dump();
 					assert(
 							unary->getType()->isPointerTy()
 									&& "Pointer is casted to non-pointer. Analysis of this is not supported yet");
+									*/
+					//TODO we introduce such casts: assert that it is not used in store
 				}
 
 			}
