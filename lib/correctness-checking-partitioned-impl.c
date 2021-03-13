@@ -337,7 +337,7 @@ void debug_printing(MPI_Aint type_extned, long loop_max, long loop_min,
 
 #define MAXIMUM_ITERATIONS 10
 
-long find_valid_partition_size_bytes(long count, long type_extend,
+unsigned long find_valid_partition_size_bytes(long count, long type_extend,
 		long requested_partition_size_bytes) {
 
 	int rank;
@@ -484,7 +484,7 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 		unsigned requested_partition_size_byte = access_size;
 
-		unsigned valid_partition_size_byte = find_valid_partition_size_bytes(
+		unsigned long valid_partition_size_byte = find_valid_partition_size_bytes(
 				count, type_extned, requested_partition_size_byte);
 #ifdef DEBUGING_PRINTINGS
 		if (rank == 0)
@@ -499,14 +499,19 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 
 		partitions = count / valid_partition_size_datamembers;
 
+		if (rank == 0)
+					printf("Partitions: %d\n",
+							partitions);
+
 		assert(count % valid_partition_size_datamembers == 0);
 		assert(
-				partitions * valid_partition_size_datamembers * type_extned
+				(partitions * valid_partition_size_datamembers * type_extned)
 						== sending_size);
 
-		assert(valid_partition_size_byte * partitions % sending_size == 0);
+
+		assert((valid_partition_size_byte * partitions) == sending_size);
 		assert(valid_partition_size_byte % type_extned == 0);
-		assert(valid_partition_size_datamembers * partitions == count);
+		assert((valid_partition_size_datamembers * partitions) == count);
 
 		/*
 		 int partition_size_datamembers = 0;
