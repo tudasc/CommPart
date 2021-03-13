@@ -500,67 +500,11 @@ Value* getAsInt(Value *v, Instruction *insert_before) {
 
 //TODO refactoring and move this part to a different file?
 Value* get_scev_value_before_parallel_function(const SCEV *scev,
-		Instruction *insert_before, Microtask *parallel_region,
-		bool use_maximum_inner_loop_values, int loop_depth);
-
-Value* get_scevAddRec_before_parallel_function(const SCEVAddRecExpr *secv,
-		Instruction *insert_before, Microtask *parallel_region,
-		bool use_maximum_inner_loop_values, int loop_depth ) {
-
-	auto *SE = analysis_results->getSE(parallel_region->get_function());
-// expressions from lower loop lvl must be loop invariant regarding this loop
-	assert(
-			SE->isLoopInvariant(secv->getStart(),
-					parallel_region->get_nested_loop(loop_depth)));
-
-	assert(
-			SE->isLoopInvariant(secv->getStepRecurrence(*SE),
-					parallel_region->get_nested_loop(loop_depth)));
-
-	if (loop_depth == 1) {
-
-		// the outer loop loops through the chunks, so we need the minimum even if the use_maximum is set true
-		return get_scev_value_before_parallel_function(secv->getStart(),
-				insert_before, parallel_region, use_maximum_inner_loop_values,
-				2);
-	} else {
-		if (use_maximum_inner_loop_values) {
-
-			secv->dump();
-			Loop *loop = parallel_region->get_nested_loop(loop_depth);
-			loop->dumpVerbose();
-
-			auto bound = loop->getBounds(*SE);
-			assert(bound.hasValue() && "Inner loop bounds are not computable");// must be computable for our analysis
-			auto *upper = &bound.getValue().getFinalIVValue();
-
-			auto *max_scev = secv->evaluateAtIteration(SE->getSCEV(upper), *SE);
-
-			bound.getValue().getInitialIVValue().dump();
-			secv->evaluateAtIteration(SE->getSCEV(&bound.getValue().getInitialIVValue()), *SE)->dump();
-
-			upper->dump();
-			max_scev->dump();
-
-			ASK_TO_CONTINIUE
-
-			return get_scev_value_before_parallel_function(max_scev,
-					insert_before, parallel_region,
-					use_maximum_inner_loop_values, loop_depth + 1);
-		} else {
-			// return start value, which is minimum
-			return get_scev_value_before_parallel_function(secv->getStart(),
-					insert_before, parallel_region,
-					use_maximum_inner_loop_values, loop_depth + 1);
-		}
-	}
-
-}
+		Instruction *insert_before, Microtask *parallel_region);
 
 // inserts the scev values outside of the parallel part
 Value* get_scev_value_before_parallel_function(const SCEV *scev,
-		Instruction *insert_before, Microtask *parallel_region,
-		bool use_maximum_inner_loop_values = false, int loop_depth = 1) {
+		Instruction *insert_before, Microtask *parallel_region) {
 
 //scev->print(errs());
 //errs() << "\n";
@@ -585,23 +529,17 @@ Value* get_scev_value_before_parallel_function(const SCEV *scev,
 		if (isa<SCEVSignExtendExpr>(c)) {
 			return builder.CreateSExt(
 					get_scev_value_before_parallel_function(operand,
-							insert_before, parallel_region,
-							use_maximum_inner_loop_values, loop_depth),
-					c->getType());
+							insert_before, parallel_region), c->getType());
 		}
 		if (isa<SCEVTruncateExpr>(c)) {
 			return builder.CreateTrunc(
 					get_scev_value_before_parallel_function(operand,
-							insert_before, parallel_region,
-							use_maximum_inner_loop_values, loop_depth),
-					c->getType());
+							insert_before, parallel_region), c->getType());
 		}
 		if (isa<SCEVZeroExtendExpr>(c)) {
 			return builder.CreateZExt(
 					get_scev_value_before_parallel_function(operand,
-							insert_before, parallel_region,
-							use_maximum_inner_loop_values, loop_depth),
-					c->getType());
+							insert_before, parallel_region), c->getType());
 		}
 	}
 	if (auto *c = dyn_cast<SCEVCommutativeExpr>(scev)) {
@@ -613,18 +551,14 @@ Value* get_scev_value_before_parallel_function(const SCEV *scev,
 
 			Value *Left_side = getAsInt(
 					get_scev_value_before_parallel_function(c->getOperand(0),
-							insert_before, parallel_region,
-							use_maximum_inner_loop_values, loop_depth),
-					insert_before);
+							insert_before, parallel_region), insert_before);
 			unsigned int operand = 1;
 			while (operand < c->getNumOperands()) {
 				Left_side = builder.CreateAdd(Left_side,
 						getAsInt(
 								get_scev_value_before_parallel_function(
 										c->getOperand(operand), insert_before,
-										parallel_region,
-										use_maximum_inner_loop_values,
-										loop_depth), insert_before), "",
+										parallel_region), insert_before), "",
 						c->hasNoUnsignedWrap(), c->hasNoSignedWrap());
 				operand++;
 			}
@@ -643,17 +577,14 @@ Value* get_scev_value_before_parallel_function(const SCEV *scev,
 			unsigned int operand = 1;
 			Value *Left_side = getAsInt(
 					get_scev_value_before_parallel_function(c->getOperand(0),
-							insert_before, parallel_region,
-							use_maximum_inner_loop_values, loop_depth),
+							insert_before, parallel_region							 ),
 					insert_before);
 			while (operand < c->getNumOperands()) {
 				Left_side = builder.CreateMul(Left_side,
 						getAsInt(
 								get_scev_value_before_parallel_function(
 										c->getOperand(operand), insert_before,
-										parallel_region,
-										use_maximum_inner_loop_values,
-										loop_depth), insert_before), "",
+										parallel_region										), insert_before), "",
 						c->hasNoUnsignedWrap(), c->hasNoSignedWrap());
 				operand++;
 			}
@@ -668,8 +599,8 @@ Value* get_scev_value_before_parallel_function(const SCEV *scev,
 	}
 
 	if (auto *c = dyn_cast<SCEVAddRecExpr>(scev)) {
-		return get_scevAddRec_before_parallel_function(c, insert_before,
-				parallel_region, use_maximum_inner_loop_values, loop_depth);
+		// use the start value
+		return get_scev_value_before_parallel_function(c->getStart(), insert_before, parallel_region);
 	}
 
 	errs() << " ERROR CALCULATING STARTPOINT\n";
@@ -869,38 +800,42 @@ CallInst* add_partition_init_call(Instruction *insert_point, Value *request_ptr,
 
 	// this is just for testing
 	// 8th parameter of static_for_init
-	Value* chunk_size_in_parallel=parallel_region->get_parallel_for()->init->getArgOperand(8);
-	Value* loop_min_in_parallel=parallel_region->get_parallel_for()->init->getArgOperand(4);
+	Value *chunk_size_in_parallel =
+			parallel_region->get_parallel_for()->init->getArgOperand(8);
+	Value *loop_min_in_parallel =
+			parallel_region->get_parallel_for()->init->getArgOperand(4);
 
 	// TODO what if cast isnt valid?
 	// then abort as no chunksize was given
-	auto* chunk_access_min= cast<SCEVAddRecExpr>(min_adress->getStart());
-	auto* chunk_access_max= cast<SCEVAddRecExpr>(max_adress->getStart());
+	auto *chunk_access_min = cast<SCEVAddRecExpr>(min_adress->getStart());
+	auto *chunk_access_max = cast<SCEVAddRecExpr>(max_adress->getStart());
 
-	auto* min_of_current_chunk=chunk_access_min->evaluateAtIteration(SE->getSCEV(loop_min_in_parallel),*SE);
-	auto* min_of_next_chunk=chunk_access_min->evaluateAtIteration(SE->getSCEV(chunk_size_in_parallel),*SE);
+	auto *min_of_current_chunk = chunk_access_min->evaluateAtIteration(
+			SE->getSCEV(loop_min_in_parallel), *SE);
+	auto *min_of_next_chunk = chunk_access_min->evaluateAtIteration(
+			SE->getSCEV(chunk_size_in_parallel), *SE);
 
-	auto* max_of_current_chunk=chunk_access_max->evaluateAtIteration(SE->getSCEV(loop_min_in_parallel),*SE);
-	auto* max_of_next_chunk=chunk_access_max->evaluateAtIteration(SE->getSCEV(chunk_size_in_parallel),*SE);
-
+	auto *max_of_current_chunk = chunk_access_max->evaluateAtIteration(
+			SE->getSCEV(loop_min_in_parallel), *SE);
+	auto *max_of_next_chunk = chunk_access_max->evaluateAtIteration(
+			SE->getSCEV(chunk_size_in_parallel), *SE);
 
 	//TODO do we need chunk size +1?
 	//auto*start_of_next_chunk=SE->getAddExpr(SE->getSCEV(loop_min_in_parallel), SE->getSCEV(chunk_size_in_parallel));
 	//start_of_next_chunk = SE->getAddExpr(start_of_next_chunk, SE->getConstant(start_of_next_chunk->getType(), 1));
 	//start_of_next_chunk->dump();
 
+	Value *A_min = get_scev_value_before_parallel_function(min_of_current_chunk,
+			insert_point, parallel_region);
 
-	Value *A_min = get_scev_value_before_parallel_function(
-			min_of_current_chunk, insert_point, parallel_region);
+	Value *B_min = get_scev_value_before_parallel_function(min_of_next_chunk,
+			insert_point, parallel_region);
 
-	Value *B_min = get_scev_value_before_parallel_function(
-			min_of_next_chunk, insert_point, parallel_region);
+	Value *A_max = get_scev_value_before_parallel_function(max_of_current_chunk,
+			insert_point, parallel_region);
 
-	Value *A_max = get_scev_value_before_parallel_function(
-			max_of_current_chunk, insert_point, parallel_region);
-
-	Value *B_max = get_scev_value_before_parallel_function(
-			max_of_next_chunk, insert_point, parallel_region);
+	Value *B_max = get_scev_value_before_parallel_function(max_of_next_chunk,
+			insert_point, parallel_region);
 
 // 8th parameter of static_for_init
 	Value *chunk_size = get_value_in_serial_part(
