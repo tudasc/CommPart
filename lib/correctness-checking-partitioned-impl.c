@@ -430,10 +430,6 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 	A_min= (next_min-curr_min)/chunk_size;
 	A_max= (next_max-curr_max)/chunk_size;
 
-
-
-
-
 	int partitions = 1;
 
 	int rank;
@@ -444,8 +440,9 @@ int partition_sending_op(void *buf, MPI_Count count, MPI_Datatype datatype,
 	assert(A_min > 0 && "Decrementing loops not supported yet");
 	assert(A_max > 0 && "Decrementing loops not supported yet");
 
-	MPI_Aint type_extned;
-	MPI_Type_extent(datatype, &type_extned);
+	MPI_Aint type_extned, type_lb;
+	//MPI_Type_extent(datatype, &type_extned);
+	MPI_Type_get_extent(datatype,&type_lb,&type_extned);
 
 	void *chunk_access_start;
 	unsigned long chunk_access_length;
