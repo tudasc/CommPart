@@ -27,7 +27,8 @@ target_link_libraries(mpi_communication_partition PRIVATE MPI::MPI_C)
 
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -Og -DDEBUG_COMMUNICATION_PARTITION_PASS=1")
 # swith off one Warning for release build: some variables are only used for assertions
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -DDEBUG_COMMUNICATION_PARTITION_PASS=0 -Wno-unused-but-set-variable")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O1 -DDEBUG_COMMUNICATION_PARTITION_PASS=0 -Wno-unused-but-set-variable")
+#TODO figure out why O2 will result in an segfault in release build!
 
 # Use C++11 to compile our pass (i.e., supply -std=c++11).
 target_compile_features(mpi_communication_partition PRIVATE cxx_range_for cxx_auto_type)
