@@ -97,7 +97,6 @@ int main(int argc, char **argv) {
 			MPI_REQUEST_NULL, MPI_REQUEST_NULL, MPI_REQUEST_NULL,
 			MPI_REQUEST_NULL, MPI_REQUEST_NULL, MPI_REQUEST_NULL };
 
-	double init_time = MPI_Wtime();
 	double heat; // total heat in system
 
 	for (int iter = 0; iter < niters; ++iter) {
@@ -167,10 +166,8 @@ int main(int argc, char **argv) {
 	double total_heat;
 	MPI_Allreduce(&heat, &total_heat, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 	if (rank == 0)
-		printf("init time: %fs\n",
-				 init_time - start_time);
-		printf("after %i iterations:\ntotal heat: %f computation time: %fs\n", niters,
-				total_heat, end_time - init_time);
+		printf("after %i iterations:\ntotal heat: %f time: %fs\n", niters,
+				total_heat, end_time - start_time);
 
 	MPI_Finalize();
 }
