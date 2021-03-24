@@ -8,8 +8,8 @@ add_library(mpi_communication_partition MODULE
     debug.h
     analysis_results.h
     analysis_results.cpp
-    Openmp_region.h
-    Openmp_region.cpp
+    Microtask.h
+    Microtask.cpp
     helper.cpp
     helper.h
     insert_changes.cpp

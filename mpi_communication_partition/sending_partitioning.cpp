@@ -19,7 +19,6 @@
 #include "helper.h"
 #include "analysis_results.h"
 #include "mpi_analysis.h"
-#include "Openmp_region.h"
 #include "insert_changes.h"
 #include "mpi_functions.h"
 
@@ -27,6 +26,7 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/CFG.h"
+#include "Microtask.h"
 
 using namespace llvm;
 

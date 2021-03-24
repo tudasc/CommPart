@@ -1,5 +1,5 @@
 /*
-  Copyright 2020 Tim Jammer
+  Copyright 2021 Tim Jammer
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -14,8 +14,8 @@
    limitations under the License.
  */
 
-#ifndef MACH_IMPLEMENTATION_SPECIFIC_H_
-#define MACH_IMPLEMENTATION_SPECIFIC_H_
+#ifndef COMMPART_IMPLEMENTATION_SPECIFIC_H_
+#define COMMPART_IMPLEMENTATION_SPECIFIC_H_
 
 #include "llvm/IR/Constant.h"
 class ImplementationSpecifics {

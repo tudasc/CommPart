@@ -14,8 +14,8 @@
  limitations under the License.
  */
 
-#ifndef MPI_COMMUNICATION_PARTITION_MPI_ANALYSIS_H_
-#define MPI_COMMUNICATION_PARTITION_MPI_ANALYSIS_H_
+#ifndef COMMPART_MPI_ANALYSIS_H_
+#define COMMPART_MPI_ANALYSIS_H_
 
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/InstrTypes.h"

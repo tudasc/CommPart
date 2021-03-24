@@ -13,11 +13,12 @@
  See the License for the specific language governing permissions and
  limitations under the License.
  */
-#ifndef MPI_COMMUNICATION_PARTITION_SENDING_PARTITIONING_H_
-#define MPI_COMMUNICATION_PARTITION_SENDING_PARTITIONING_H_
+#ifndef COMMPART_SENDING_PARTITIONING_H_
+#define COMMPART_SENDING_PARTITIONING_H_
 
 #include "llvm/IR/Instructions.h"
-#include "Openmp_region.h"
+
+#include "Microtask.h"
 
 bool handle_fork_call(Microtask *parallel_region, llvm::CallInst *send_call);
 bool handle_send_call(llvm::CallInst *send_call);

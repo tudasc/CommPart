@@ -13,13 +13,13 @@
  See the License for the specific language governing permissions and
  limitations under the License.
  */
-#ifndef MPI_COMMUNICATION_PARTITION_INSERT_CHANGES_H_
-#define MPI_COMMUNICATION_PARTITION_INSERT_CHANGES_H_
+#ifndef COMMPART_INSERT_CHANGES_H_
+#define COMMPART_INSERT_CHANGES_H_
 // Handle actual insertion of the changes calls
 
-#include "Openmp_region.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "Microtask.h"
 
 // return true if modification where done
 bool handle_modification_location(llvm::CallInst *send_call,

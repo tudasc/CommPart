@@ -1,5 +1,5 @@
 /*
- Copyright 2020 Tim Jammer
+ Copyright 2021 Tim Jammer
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -72,9 +72,9 @@
 #include "debug.h"
 #include "implementation_specific.h"
 #include "mpi_functions.h"
-#include "Openmp_region.h"
 #include "helper.h"
 #include "insert_changes.h"
+#include "Microtask.h"
 #include "sending_partitioning.h"
 
 using namespace llvm;
@@ -175,6 +175,7 @@ struct MSGOrderRelaxCheckerPass: public ModulePass {
 
 		// only need to dump the relevant part
 /*
+  		M.getFunction("main")->dump();
 		M.getFunction(".omp_outlined.")->dump();
 		M.getFunction("main")->dump();
 		if (M.getFunction(".omp_outlined._p") != nullptr) {

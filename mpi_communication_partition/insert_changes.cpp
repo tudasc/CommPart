@@ -15,7 +15,6 @@
  */
 
 #include "insert_changes.h"
-#include "Openmp_region.h"
 #include "debug.h"
 #include "helper.h"
 #include "analysis_results.h"
@@ -28,6 +27,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "Microtask.h"
 
 using namespace llvm;
 

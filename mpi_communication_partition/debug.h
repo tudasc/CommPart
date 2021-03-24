@@ -1,5 +1,5 @@
 /*
-  Copyright 2020 Tim Jammer
+  Copyright 2021 Tim Jammer
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -14,8 +14,8 @@
    limitations under the License.
  */
 
-#ifndef MACH_DEBUG_H
-#define MACH_DEBUG_H
+#ifndef COMMPART_DEBUG_H
+#define COMMPART_DEBUG_H
 
 //#define DEBUG_COMMUNICATION_PARTITION_PASS 1
 
